@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-chargeback_ops"
+version = "0.1.0"
+description = "ChargebackOps: a real-world OpenEnv environment for merchant dispute handling."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.51.0",
+    "fastapi>=0.135.0",
+    "openai>=2.30.0",
+    "openenv-core[core]>=0.2.2",
+    "pydantic>=2.12.0",
+    "python-dotenv>=1.0.1",
+    "uvicorn>=0.42.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "chargeback_ops.server.app:main"
+chargebackops-baseline = "chargeback_ops.baseline_runner:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["chargeback_ops", "chargeback_ops.server"]
+package-dir = { "chargeback_ops" = ".", "chargeback_ops.server" = "server" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,7 @@
+spec_version: 1
+name: chargeback_ops
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
+description: Merchant dispute handling and chargeback representment environment
