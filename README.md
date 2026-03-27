@@ -1,8 +1,5 @@
 ---
 title: ChargebackOps
-emoji: 💳
-colorFrom: blue
-colorTo: gray
 sdk: docker
 app_port: 8000
 tags:
@@ -11,328 +8,376 @@ tags:
 
 # ChargebackOps
 
-ChargebackOps is a real-world OpenEnv environment for merchant-side dispute operations. An agent acts like a chargeback analyst: it reviews incoming disputes, decides whether to contest or concede, gathers evidence from synthetic merchant systems, and resolves cases under deadline pressure.
+ChargebackOps is a real-world OpenEnv environment for merchant-side chargeback operations. An agent acts as a dispute analyst, works a queue of payment disputes, investigates evidence across synthetic internal systems, chooses whether to contest or concede, and is graded on recovery quality, deadline handling, and operational discipline.
 
-This is not a toy environment and not a retrieval demo. The hard task is a portfolio-optimization problem over a live queue of disputes with different amounts, deadlines, and win profiles.
+The environment is designed for the Round 1 OpenEnv problem statement:
 
-## Why this environment exists
+- Real-world task, not a game or toy
+- Typed OpenEnv models and `reset()` / `step()` / `state()` support
+- Three graded tasks with easy, medium, and hard difficulty
+- Dense reward shaping with partial progress and negative signals
+- Root-level `inference.py` that uses the OpenAI client contract
+- Docker and Hugging Face Spaces deployment path
 
-Chargeback operations are painful, repetitive, and economically important. Real analysts do not just fill forms. They:
+## Why This Environment Matters
 
-- triage cases by deadline and recovery value
-- inspect reason-code policy
-- gather evidence across internal systems
-- avoid harmful or contradictory attachments
+Merchant dispute handling is a real operations workflow. Analysts do not just classify a ticket or answer a question. They must:
+
+- inspect the dispute reason code and the response deadline
+- gather evidence from the right internal systems
+- avoid attaching evidence that weakens the case
 - choose whether to contest, accept, or refund
-- close cases before network deadlines
+- maximize recovery across a queue under limited time
 
-That maps cleanly to the standard `reset()` / `step()` / `state()` API and produces deterministic grading.
+That makes ChargebackOps a strong benchmark for tool-using agents. It tests retrieval, decision-making, prioritization, and operational restraint in a controlled environment with deterministic scoring.
 
-## Environment design
+## System Architecture
 
-ChargebackOps simulates a merchant operations stack with fully synthetic data:
+```mermaid
+flowchart LR
+    A["Agent or inference.py"] --> B["OpenAI-compatible client<br/>API_BASE_URL + MODEL_NAME + HF_TOKEN"]
+    A --> C["ChargebackOps HTTP API"]
+    C --> D["OpenEnv server<br/>server.app"]
+    D --> E["ChargebackOpsEnvironment<br/>step / reset / state"]
+    E --> F["Task simulator<br/>simulation.py"]
+    E --> G["Dense reward shaping<br/>server/chargeback_ops_environment.py"]
+    E --> H["Deterministic grader<br/>grading.py"]
+    H --> I["Episode report store<br/>episode_store.py"]
+    D --> J["Utility routes<br/>/tasks /grader /baseline /health"]
+```
 
-- order management
-- payment gateway ledger
-- shipping and delivery records
-- customer support transcripts
-- refund ledger
-- fraud and device-risk summaries
-- dispute policy guidance by reason code
+## Episode Workflow
 
-The agent never gets hidden truth directly. It must reveal systems, curate evidence, and resolve cases using typed actions.
+```mermaid
+flowchart TD
+    A["reset(task_id)"] --> B["Select the next case from the queue"]
+    B --> C["Inspect case metadata"]
+    C --> D["Retrieve policy guidance"]
+    D --> E["Query merchant systems<br/>orders, payment, shipping, support, refunds, risk"]
+    E --> F["Attach or remove evidence"]
+    F --> G["Set strategy"]
+    G --> H{"contest?"}
+    H -->|yes| I["submit_representment"]
+    H -->|no| J["resolve_case<br/>accept_chargeback or issue_refund"]
+    I --> K{"all cases resolved or max steps reached?"}
+    J --> K
+    K -->|no| B
+    K -->|yes| L["grader computes final score 0.0 to 1.0"]
+```
 
-## Action space
+## Environment Design
 
-The action model is [`ChargebackOpsAction`](./models.py) and includes:
+### Internal systems
 
-- `select_case`: choose which dispute to work on
-- `inspect_case`: reveal merchant-side notes for the selected case
-- `query_system`: inspect one of `orders`, `payment`, `shipping`, `support`, `refunds`, or `risk`
-- `retrieve_policy`: load reason-code guidance and required evidence hints
-- `add_evidence`: attach one or more revealed evidence items
-- `remove_evidence`: remove attached evidence
-- `set_strategy`: set `contest`, `accept_chargeback`, or `issue_refund`
-- `submit_representment`: submit the contest package
-- `resolve_case`: resolve a case via `accept_chargeback` or `issue_refund`
+The environment exposes evidence gradually from six synthetic merchant systems:
 
-The full schema is available at `GET /tasks`.
+- `orders`
+- `payment`
+- `shipping`
+- `support`
+- `refunds`
+- `risk`
 
-## Observation space
+Each task contains hidden ground truth about:
 
-The observation model is [`ChargebackOpsObservation`](./models.py). Each step returns:
+- optimal strategy per case
+- acceptable fallback strategies
+- required evidence
+- helpful evidence
+- harmful evidence
+- deadline pressure
+- case weight in the final score
 
-- task id, title, objective, and difficulty
-- current queue with case amount, reason code, status, and deadline countdown
-- selected case workspace
-- revealed evidence snippets
-- attached evidence
-- visible policy guidance
+### OpenEnv contract
+
+| Method | Behavior |
+| --- | --- |
+| `reset(task_id=...)` | starts a fresh episode and returns the initial typed observation |
+| `step(action)` | applies one typed action and returns the next observation with reward and done |
+| `state()` | returns the current typed internal state |
+
+Core runtime files:
+
+- [`models.py`](/home/btwitsvoid/Documents/Agents/ChargeBackOps/models.py)
+- [`server/chargeback_ops_environment.py`](/home/btwitsvoid/Documents/Agents/ChargeBackOps/server/chargeback_ops_environment.py)
+- [`server/app.py`](/home/btwitsvoid/Documents/Agents/ChargeBackOps/server/app.py)
+- [`openenv.yaml`](/home/btwitsvoid/Documents/Agents/ChargeBackOps/openenv.yaml)
+
+## Typed Spaces
+
+### Action space
+
+| Action | Purpose |
+| --- | --- |
+| `select_case` | focus a case from the queue |
+| `inspect_case` | reveal analyst notes for the selected case |
+| `query_system` | pull evidence from one merchant system |
+| `retrieve_policy` | reveal reason-code guidance and required evidence |
+| `add_evidence` | attach retrieved evidence to the current package |
+| `remove_evidence` | remove evidence, including harmful attachments |
+| `set_strategy` | choose `contest`, `accept_chargeback`, or `issue_refund` |
+| `submit_representment` | submit a contest package for a contested case |
+| `resolve_case` | close a non-contest case with acceptance or refund |
+
+### Observation space
+
+Each observation includes:
+
+- task metadata: id, title, difficulty, objective
+- current queue with deadlines and case summaries
+- currently selected case
+- visible evidence and policy data
 - available actions
-- steps remaining
-- dense reward in `reward`
-- reward breakdown in `metadata.reward_components`
-- final grader report when the episode is done
+- `steps_remaining`
+- `progress_score`
+- `last_action_result`
+- optional terminal `grader_report`
 
-`state()` returns the extended [`ChargebackOpsState`](./models.py) with queue state, action history, and the latest grading report.
+### State space
 
-## Tasks
+The environment state exposes:
 
-ChargebackOps ships with three deterministic tasks.
+- current episode id and step count
+- public queue resolution state
+- action history
+- latest grade estimate
+- final grader report once complete
 
-### 1. Delivered But Disputed
+## Task Suite
 
-- Difficulty: `easy`
-- Goal: contest a `goods_not_received` dispute
-- What matters: order confirmation + carrier delivery evidence + submitting before deadline
+| Task ID | Title | Difficulty | Objective |
+| --- | --- | --- | --- |
+| `goods_not_received_easy` | Delivered But Disputed | easy | contest a straightforward goods-not-received case with delivery proof |
+| `fraud_signal_ambiguity` | Fraud Signal Ambiguity | medium | handle a card-not-present fraud dispute with mixed evidence and harmful artifacts |
+| `queue_optimization_hard` | Dispute Queue Optimization | hard | maximize recovery across a multi-case queue under tight step and deadline pressure |
 
-### 2. Fraud Signal Ambiguity
+Difficulty progression is deliberate:
 
-- Difficulty: `medium`
-- Goal: handle a `fraud_cnp` case with both supportive and harmful signals
-- What matters: using account-linkage evidence while avoiding AVS/CVV mismatch artifacts
+- Easy teaches the standard representment loop.
+- Medium introduces ambiguity and evidence curation.
+- Hard adds queue prioritization, step-budget pressure, and opportunity cost.
 
-### 3. Dispute Queue Optimization
+## Reward Design
 
-- Difficulty: `hard`
-- Goal: maximize recovery across three simultaneous disputes
-- What matters: prioritization, avoiding weak contests, and not missing short deadlines
+ChargebackOps provides dense per-step feedback and a terminal bonus. The environment rewards progress and penalizes obviously bad operations behavior.
 
-## Reward shaping
+Positive signals include:
 
-ChargebackOps uses dense trajectory rewards, not a final binary score only.
+- selecting and inspecting the right case
+- retrieving policy guidance
+- querying systems that expose useful evidence
+- attaching helpful or required evidence
+- setting the optimal strategy
+- submitting a complete representment on time
+- resolving a case with the optimal non-contest strategy
 
-Positive signals:
+Negative signals include:
 
-- selecting a live case
-- revealing a useful system
-- attaching helpful evidence
-- setting the right strategy
-- submitting a valid representment
-- resolving a case correctly before deadline
-
-Negative signals:
-
-- duplicate or redundant queries
 - invalid actions
+- duplicate system queries
 - attaching harmful evidence
-- late submissions
-- contesting unwinnable cases
-- leaving cases unresolved when the step budget expires
+- removing helpful evidence
+- weak strategy choices
+- submitting incomplete or late representments
+- missing deadlines on still-open cases
 
-## Deterministic grading
+At episode end, the environment adds a terminal bonus proportional to the deterministic grader score.
 
-Each episode ends with a programmatic grader report. Per-case scoring combines:
+## Grading
 
-- strategy correctness
-- evidence quality
-- packet validity
-- deadline compliance
-- efficiency
-- outcome quality
+Each finished episode is scored in `[0.0, 1.0]` by the deterministic grader in [`grading.py`](/home/btwitsvoid/Documents/Agents/ChargeBackOps/grading.py).
 
-Scores are normalized to `0.0` to `1.0` and exposed through:
+Per-case weighting:
 
-- the final observation
-- `state()`
-- `GET /grader`
+| Component | Weight |
+| --- | --- |
+| strategy correctness | 0.25 |
+| evidence quality | 0.25 |
+| packet validity | 0.15 |
+| deadline compliance | 0.15 |
+| efficiency | 0.10 |
+| outcome quality | 0.10 |
 
-## Baseline providers
+The hard task aggregates multiple case scores by case weight and normalizes the final result to `0.0` to `1.0`.
 
-The baseline runner now defaults to the more reliable free live path:
+## Inference and Model Providers
 
-- default provider: `groq`
-- default model: `llama-3.3-70b-versatile`
+The required root inference entry point is [`inference.py`](/home/btwitsvoid/Documents/Agents/ChargeBackOps/inference.py). It uses the OpenAI Python client with the challenge-compatible environment variables:
 
-The repository also keeps provider integrations for:
-
-- OpenAI
-- Anthropic
-- Groq
-- OpenRouter (`nvidia/nemotron-3-super-120b-a12b:free`)
-
-If no provider key is available, the runner falls back to a deterministic heuristic policy so the project can still be validated locally.
-The runner also fast-paths obvious housekeeping actions so live provider calls are spent on genuine branching decisions instead of deterministic retrieval/attach/submit steps.
-
-### Supported environment variables
-
-See [`.env.example`](./.env.example).
-
-Key variables:
-
-- `BASELINE_PROVIDER`
-- `BASELINE_MODEL`
-- `BASELINE_REQUEST_TIMEOUT_SECONDS`
-- `PROVIDER_RATE_LIMIT_RETRIES`
-- `PROVIDER_RETRY_BACKOFF_SECONDS`
-- `STRICT_LLM_MODE`
 - `API_BASE_URL`
 - `MODEL_NAME`
 - `HF_TOKEN`
-- `INFERENCE_TIMEOUT_SECONDS`
-- `OPENROUTER_API_KEY`
-- `OPENROUTER_HTTP_REFERER`
-- `OPENROUTER_APP_TITLE`
+
+Default configuration:
+
+- provider path: OpenRouter
+- model: `openai/gpt-oss-120b`
+
+Also supported through the same OpenAI-compatible client pattern:
+
+- OpenAI
+- Anthropic-compatible gateways
+- Groq
+- OpenRouter
+
+The repository also keeps optional direct keys for convenience in [`.env.example`](/home/btwitsvoid/Documents/Agents/ChargeBackOps/.env.example):
+
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 - `GROQ_API_KEY`
+- `OPENROUTER_API_KEY`
 
-For `OPENROUTER_HTTP_REFERER`, use the public URL of the deployed app after it exists, such as your Hugging Face Space URL (`https://your-space-name.hf.space`). If nothing is deployed yet, leave it unset. It is optional and only used for OpenRouter app attribution.
+### OpenRouter referer
 
-`HF_TOKEN` is the generic API key passed to the OpenAI client for the selected `API_BASE_URL`. For OpenRouter, put your OpenRouter key there. For Groq, point `API_BASE_URL` to `https://api.groq.com/openai/v1`, set `MODEL_NAME=llama-3.3-70b-versatile`, and put your Groq key in `HF_TOKEN`.
-`PROVIDER_RATE_LIMIT_RETRIES` and `PROVIDER_RETRY_BACKOFF_SECONDS` control bounded retry behavior for transient provider rate limits and timeouts. The default `.env.example` keeps these low on purpose so `inference.py` stays within hackathon runtime expectations.
-Set `STRICT_LLM_MODE=1` when you want evaluation to fail immediately on any provider fallback instead of silently dropping to the heuristic policy.
+Leave `OPENROUTER_HTTP_REFERER` empty during local development. Once the app is deployed, set it to the public app URL, for example:
 
-## Baseline scores
+```bash
+OPENROUTER_HTTP_REFERER=https://your-space-name.hf.space
+OPENROUTER_APP_TITLE=ChargebackOps
+```
 
-Local deterministic fallback baseline:
+## Baseline Results
 
-- `goods_not_received_easy`: `0.7075`
-- `fraud_signal_ambiguity`: `0.7075`
-- `queue_optimization_hard`: `0.7271`
-- average: `0.7140`
+The repository includes two baseline entry points:
 
-When provider credentials are present, the same script and `/baseline` endpoint use the configured LLM provider.
-The payload includes `provider_calls_attempted`, `provider_calls_succeeded`, and `provider_errors` so rate-limited free-model runs do not masquerade as successful live inference. If every provider request falls back locally, `mode` is reported as `heuristic_fallback`.
+- [`inference.py`](/home/btwitsvoid/Documents/Agents/ChargeBackOps/inference.py) for the challenge contract
+- [`baseline_runner.py`](/home/btwitsvoid/Documents/Agents/ChargeBackOps/baseline_runner.py) for direct local runs and the `/baseline` endpoint
 
-## API surface
+Verified local heuristic-fallback baseline scores are documented below after the latest validation pass:
 
-OpenEnv endpoints are exposed by the generated server scaffold.
+| Task | Score |
+| --- | --- |
+| Delivered But Disputed | `0.7075` |
+| Fraud Signal Ambiguity | `0.7075` |
+| Dispute Queue Optimization | `0.7271` |
+| Average | `0.7140` |
 
-Custom endpoints added by this project:
+These values are replaced after each validation run so the README reflects real, reproducible output from the current codebase.
 
-- `GET /tasks`: list tasks and the action schema
-- `GET /grader`: latest grade report, or `?episode_id=<id>` for a specific episode
-- `GET /baseline`: run the baseline with optional `provider` and `model_name`
+## API Surface
 
-## Local setup
+The FastAPI app exposes:
+
+- `GET /` basic service ping
+- `GET /health` health check
+- `GET /docs` interactive OpenAPI docs
+- `POST /reset` start a new episode
+- `POST /step` advance the environment
+- `GET /state` inspect the current state
+- `GET /tasks` enumerate tasks and the action schema
+- `GET /grader` or `POST /grader` fetch the last completed episode grade
+- `GET /baseline` or `POST /baseline` run the bundled baseline
+
+## Local Setup
 
 ### 1. Install dependencies
 
+Using `uv`:
+
 ```bash
-pip install -e .[dev]
+uv sync --extra dev
 ```
 
-### 2. Run the server
+Using `pip`:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+### 2. Configure environment variables
+
+```bash
+cp .env.example .env
+```
+
+At minimum, configure:
+
+```bash
+API_BASE_URL=https://openrouter.ai/api/v1
+MODEL_NAME=openai/gpt-oss-120b
+HF_TOKEN=your_provider_key
+```
+
+### 3. Run the test and validation suite
+
+```bash
+pytest -q tests
+openenv validate .
+python inference.py
+```
+
+### 4. Start the server locally
 
 ```bash
 uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
-### 3. Run tests
-
-```bash
-pytest -q tests
-```
-
-### 3a. Run the problem-statement audit
-
-```bash
-python scripts/problem_statement_audit.py
-```
-
-This audit checks the environment against the challenge brief:
-
-- easy / medium / hard task coverage
-- deterministic grader behavior
-- partial-progress reward shaping
-- separation between a competent policy and a bad control policy
-- `inference.py` contract
-- `openenv validate`
-- baseline and inference execution
-
-This audit disables live provider keys on purpose so it stays deterministic and fast.
-
-### 3b. Run the live-provider audit
-
-```bash
-python scripts/live_provider_audit.py
-```
-
-Use this when you want to see whether the configured provider is actually making decisions live, how many provider calls succeeded, and whether fallback was used.
-The output also includes `provider_errors` so you can distinguish rate limits from connectivity or response-format failures.
-
-### 4. Run the baseline
-
-```bash
-python scripts/run_baseline.py
-```
-
-### 5. Run the submission inference script
-
-```bash
-python inference.py
-```
-
-This script uses the challenge-style environment variables:
-
-- `API_BASE_URL`
-- `MODEL_NAME`
-- `HF_TOKEN`
-
-To use a provider-backed baseline:
-
-```bash
-BASELINE_PROVIDER=groq BASELINE_MODEL=llama-3.3-70b-versatile python scripts/run_baseline.py
-```
-
-To force the OpenRouter free path:
-
-```bash
-BASELINE_PROVIDER=openrouter BASELINE_MODEL=nvidia/nemotron-3-super-120b-a12b:free python scripts/run_baseline.py
-```
-
 ## Docker
 
-Build from the project root:
+Build and run the root Docker image:
 
 ```bash
 docker build -t chargebackops .
-docker run -p 8000:8000 chargebackops
+docker run --rm -p 8000:8000 --env-file .env chargebackops
 ```
 
-The repository also includes the OpenEnv scaffold Dockerfile at [`server/Dockerfile`](./server/Dockerfile).
-
-## Hugging Face Spaces
-
-This repository is ready for a Docker-based Hugging Face Space.
-
-Typical workflow:
+Once the container is running:
 
 ```bash
-openenv validate .
-openenv push
+curl http://localhost:8000/
+curl http://localhost:8000/tasks
+curl http://localhost:8000/health
 ```
 
-## File layout
+## Hugging Face Spaces Deployment
+
+ChargebackOps is configured as a Docker Space through the YAML frontmatter in this README.
+
+Recommended deployment steps:
+
+1. Create a new Hugging Face Space with `Docker` as the SDK.
+2. Push this repository to the Space.
+3. Add the runtime variables in Space Settings:
+   - `API_BASE_URL`
+   - `MODEL_NAME`
+   - `HF_TOKEN`
+4. If using OpenRouter, add:
+   - `OPENROUTER_HTTP_REFERER=https://your-space-name.hf.space`
+   - `OPENROUTER_APP_TITLE=ChargebackOps`
+5. Verify:
+   - `/`
+   - `/health`
+   - `/tasks`
+   - `/docs`
+   - `/baseline`
+
+## Validation Checklist
+
+- `pytest -q tests`
+- `openenv validate .`
+- `python inference.py`
+- `docker build -t chargebackops .`
+- `docker run --rm -p 8000:8000 --env-file .env chargebackops`
+
+## Project Layout
 
 ```text
-chargeback_ops/
-├── .env.example
-├── README.md
+.
 ├── baseline_runner.py
 ├── client.py
-├── episode_store.py
 ├── grading.py
+├── inference.py
 ├── models.py
 ├── openenv.yaml
-├── pyproject.toml
-├── simulation.py
-├── scripts/
-│   └── run_baseline.py
 ├── server/
 │   ├── app.py
-│   ├── chargeback_ops_environment.py
-│   └── Dockerfile
+│   └── chargeback_ops_environment.py
+├── simulation.py
 └── tests/
-    ├── conftest.py
-    ├── test_api.py
-    ├── test_env.py
-    └── test_grader.py
 ```
 
 ## Notes
 
-- All cases and merchant data are synthetic.
-- The environment idea remains fixed: merchant chargeback representment and dispute handling.
-- The provider layer is configurable, but the benchmark logic and task design are deterministic.
+- This is a synthetic benchmark environment, not a live payments integration.
+- The world state is deterministic by design so graders remain reproducible.
+- Live model quality still depends on the quota and reliability of the configured provider.

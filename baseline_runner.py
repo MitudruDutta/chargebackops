@@ -30,11 +30,11 @@ except ImportError:  # pragma: no cover
 if load_dotenv is not None:  # pragma: no cover
     load_dotenv()
 
-DEFAULT_PROVIDER = "groq"
+DEFAULT_PROVIDER = "openrouter"
 MAX_LLM_CANDIDATES = 4
 MAX_PROVIDER_RESPONSE_TOKENS = 80
 DEFAULT_MODELS = {
-    "openrouter": "nvidia/nemotron-3-super-120b-a12b:free",
+    "openrouter": "openai/gpt-oss-120b",
     "groq": "llama-3.3-70b-versatile",
     "openai": "gpt-5-mini",
     "anthropic": "claude-3-5-haiku-latest",
@@ -567,7 +567,7 @@ def _resolve_provider(
     chosen_provider = (provider or os.getenv("BASELINE_PROVIDER") or DEFAULT_PROVIDER).lower()
     chosen_model = model_name or os.getenv("BASELINE_MODEL") or DEFAULT_MODELS.get(
         chosen_provider,
-        "nvidia/nemotron-3-super-120b-a12b:free",
+        "openai/gpt-oss-120b",
     )
     return ProviderConfig(provider=chosen_provider, model_name=chosen_model)
 
