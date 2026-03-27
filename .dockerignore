@@ -1,0 +1,16 @@
+.git
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+.venv
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.env
+.env.*
+tests/__pycache__/
+scripts/__pycache__/
+server/__pycache__/
+*.log
