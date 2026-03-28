@@ -1,27 +1,24 @@
----
-title: ChargebackOps
-sdk: docker
-app_port: 8000
-tags:
-  - openenv
----
-
 # ChargebackOps
 
-A production-grade OpenEnv environment for merchant-side chargeback dispute operations. An AI agent acts as a dispute analyst — investigating evidence across internal systems, choosing whether to contest or concede, and maximizing financial recovery under deadline and step-budget pressure.
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
+![OpenEnv](https://img.shields.io/badge/OpenEnv-Compatible-111827)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)
 
-Built for the [OpenEnv Hackathon](https://openenv.org/) Round 1 challenge.
+ChargebackOps is an OpenEnv environment for merchant-side chargeback and dispute operations. The agent acts as a dispute analyst: it triages open disputes, retrieves evidence from merchant systems, decides whether to contest or concede, and resolves each case under deadline and step-budget pressure.
+
+The repository is designed for agent evaluation rather than generic chat. It exposes a typed action space, deterministic state transitions, dense reward shaping, and programmatic grading so model behavior can be measured as operational performance.
 
 ## Why This Environment Matters
 
-Chargeback dispute handling is a real operations workflow that costs merchants **$125 billion annually**. Analysts must:
+Chargeback dispute handling is a real operations workflow. Analysts must:
 
-- Parse reason codes and assess representment deadlines
-- Gather evidence from the right merchant systems while avoiding harmful artifacts
-- Decide whether to contest, accept, or refund — under time pressure
-- Prioritize cases in a multi-dispute queue by deadline urgency and financial impact
+- interpret reason codes and response deadlines
+- gather evidence from the correct internal systems while avoiding harmful artifacts
+- decide whether to contest, accept, or refund
+- prioritize multiple disputes by urgency, recoverability, and operational cost
 
-This makes ChargebackOps a strong benchmark for tool-using agents. It tests retrieval, decision-making, prioritization, and operational restraint in a controlled environment with deterministic scoring.
+That makes ChargebackOps a good benchmark for tool-using agents. It measures retrieval quality, decision quality, prioritization, and operational restraint in a controlled environment with deterministic scoring.
 
 ## Architecture
 
