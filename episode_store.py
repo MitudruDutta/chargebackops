@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover
 _LOCK = Lock()
 _REPORTS: dict[str, GraderReport] = {}
 _LATEST_EPISODE_ID: str | None = None
+_MAX_REPORTS = 100
 
 
 def record_report(report: GraderReport) -> None:
@@ -19,6 +20,9 @@ def record_report(report: GraderReport) -> None:
 
     global _LATEST_EPISODE_ID
     with _LOCK:
+        if len(_REPORTS) >= _MAX_REPORTS:
+            oldest = next(iter(_REPORTS))
+            del _REPORTS[oldest]
         _REPORTS[report.episode_id] = report
         _LATEST_EPISODE_ID = report.episode_id
 

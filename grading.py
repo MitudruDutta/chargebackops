@@ -16,6 +16,58 @@ def _ratio(numerator: int, denominator: int) -> float:
     return max(0.0, min(1.0, numerator / denominator))
 
 
+def grade_representment_note(
+    note: str | None,
+    case: "InternalCase",
+    attached_ids: set[str],
+) -> float:
+    """Score a representment note from 0.0 to 1.0.
+
+    Evaluates whether the note:
+    - References required claims from the policy requirements
+    - Avoids mentioning harmful evidence
+    - Has sufficient substance (length and specificity)
+    """
+    if not note or not note.strip():
+        return 0.0
+
+    text = note.lower()
+    score = 0.0
+
+    # Substance: minimum length for a coherent note
+    word_count = len(text.split())
+    if word_count >= 5:
+        score += 0.2
+    elif word_count >= 2:
+        score += 0.1
+
+    # Required claims coverage: does the note mention policy requirements?
+    if case.policy_requirements:
+        claims_hit = 0
+        for req in case.policy_requirements:
+            req_keywords = req.lower().split()
+            if any(kw in text for kw in req_keywords if len(kw) > 3):
+                claims_hit += 1
+        score += 0.5 * _ratio(claims_hit, len(case.policy_requirements))
+    else:
+        score += 0.3  # No requirements to check
+
+    # Evidence coherence: does the note reference attached evidence?
+    evidence_refs = sum(1 for eid in attached_ids if eid.lower() in text or any(
+        part in text for part in eid.lower().replace("-", " ").split() if len(part) > 3
+    ))
+    if evidence_refs > 0:
+        score += 0.15
+
+    # Harmful mention penalty: does the note mention harmful evidence concepts?
+    harmful_keywords = {"mismatch", "failed", "declined", "suspicious", "flagged", "fraud risk"}
+    harmful_hits = sum(1 for kw in harmful_keywords if kw in text)
+    if harmful_hits > 0:
+        score -= 0.15 * min(harmful_hits, 2)
+
+    return max(0.0, min(1.0, score))
+
+
 def score_case(
     case: InternalCase,
     progress: CaseProgress,
@@ -24,15 +76,10 @@ def score_case(
     """Score one case deterministically."""
 
     final_resolution = progress.final_resolution or "unresolved"
-    required_attached = len(
-        set(progress.attached_evidence_ids).intersection(case.required_evidence_ids)
-    )
-    helpful_attached = len(
-        set(progress.attached_evidence_ids).intersection(case.helpful_evidence_ids)
-    )
-    harmful_attached = len(
-        set(progress.attached_evidence_ids).intersection(case.harmful_evidence_ids)
-    )
+    attached_set = set(progress.attached_evidence_ids)
+    required_attached = len(attached_set.intersection(case.required_evidence_ids))
+    helpful_attached = len(attached_set.intersection(case.helpful_evidence_ids))
+    harmful_attached = len(attached_set.intersection(case.harmful_evidence_ids))
 
     if final_resolution == case.optimal_strategy:
         strategy_correctness = 1.0
@@ -53,16 +100,22 @@ def score_case(
         )
     else:
         if final_resolution in {"accept_chargeback", "issue_refund"}:
-            evidence_quality = 1.0 if helpful_attached == 0 and harmful_attached == 0 else 0.7
-            packet_validity = 1.0
+            if case.optimal_strategy == "contest":
+                # Conceded a contestable case — evidence gathering was abandoned
+                evidence_quality = 0.3
+                packet_validity = 0.0
+            else:
+                evidence_quality = 1.0 if helpful_attached == 0 and harmful_attached == 0 else 0.7
+                packet_validity = 1.0
         else:
             evidence_quality = 0.0
             packet_validity = 0.0
 
+    resolution_step = progress.resolved_at_step if progress.resolved_at_step is not None else step_count
     deadline_compliance = 1.0
     if final_resolution == "unresolved":
         deadline_compliance = 0.0
-    elif step_count > case.deadline_step:
+    elif resolution_step > case.deadline_step:
         deadline_compliance = 0.0
 
     wasted_actions = progress.duplicate_queries + progress.invalid_actions
@@ -75,13 +128,20 @@ def score_case(
     else:
         outcome_quality = 0.0
 
+    # Representment note quality (only relevant for contested cases)
+    if final_resolution == "contest" and progress.representment_note:
+        note_quality = grade_representment_note(progress.representment_note, case, attached_set)
+    else:
+        note_quality = 0.0
+
     weighted_score = (
         0.25 * strategy_correctness
-        + 0.25 * evidence_quality
+        + 0.20 * evidence_quality
         + 0.15 * packet_validity
         + 0.15 * deadline_compliance
         + 0.10 * efficiency
         + 0.10 * outcome_quality
+        + 0.05 * note_quality
     )
 
     note_parts = [case.resolution_summary]
@@ -100,6 +160,7 @@ def score_case(
         deadline_compliance=round(deadline_compliance, 4),
         efficiency=round(efficiency, 4),
         outcome_quality=round(outcome_quality, 4),
+        note_quality=round(note_quality, 4),
         weighted_score=round(weighted_score * case.weight, 4),
         final_resolution=final_resolution,
         notes=" ".join(note_parts),

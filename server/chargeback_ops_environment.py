@@ -175,7 +175,7 @@ class ChargebackOpsEnvironment(
         if action.action_type == "set_strategy":
             return self._set_strategy(case, action.strategy)
         if action.action_type == "submit_representment":
-            return self._submit_representment(case)
+            return self._submit_representment(case, note=action.note)
         if action.action_type == "resolve_case":
             return self._resolve_case(case, action.strategy)
         raise ValueError(f"Unsupported action_type '{action.action_type}'.")
@@ -306,9 +306,11 @@ class ChargebackOpsEnvironment(
             return 0.03, f"Set an acceptable fallback strategy '{strategy}' for case {case.case_id}."
         return -0.08, f"Set a weak strategy '{strategy}' for case {case.case_id}."
 
-    def _submit_representment(self, case: InternalCase) -> tuple[float, str]:
+    def _submit_representment(self, case: InternalCase, *, note: str | None = None) -> tuple[float, str]:
         progress = self._progress_by_case[case.case_id]
         progress.submit_attempts += 1
+        if note:
+            progress.representment_note = note
         if progress.current_strategy != "contest":
             raise ValueError("submit_representment requires current strategy to be 'contest'.")
         if progress.resolution_status != "open":
@@ -320,21 +322,25 @@ class ChargebackOpsEnvironment(
         if self._state.step_count > case.deadline_step:
             progress.final_resolution = "contest"
             progress.resolution_status = "lost_late"
+            progress.resolved_at_step = self._state.step_count
             return -0.2, f"Representment for case {case.case_id} was submitted after the deadline."
         if missing:
             progress.final_resolution = "contest"
             progress.resolution_status = "lost_incomplete"
+            progress.resolved_at_step = self._state.step_count
             return -0.18, (
                 f"Representment for case {case.case_id} is incomplete; missing {', '.join(sorted(missing))}."
             )
         if harmful:
             progress.final_resolution = "contest"
             progress.resolution_status = "lost_harmful_evidence"
+            progress.resolved_at_step = self._state.step_count
             return -0.15, (
                 f"Representment for case {case.case_id} included harmful evidence {', '.join(sorted(harmful))}."
             )
 
         progress.final_resolution = "contest"
+        progress.resolved_at_step = self._state.step_count
         if case.optimal_strategy == "contest":
             progress.resolution_status = "won"
             return 0.2, f"Submitted a strong representment package for case {case.case_id}."
@@ -354,6 +360,7 @@ class ChargebackOpsEnvironment(
             return -0.04, f"Case {case.case_id} is already resolved."
         progress.final_resolution = resolution
         progress.current_strategy = resolution
+        progress.resolved_at_step = self._state.step_count
         progress.resolution_status = (
             "refunded" if resolution == "issue_refund" else "accepted_chargeback"
         )
@@ -457,7 +464,6 @@ class ChargebackOpsEnvironment(
                 reason_code=case.reason_code,
                 guidance=case.policy_guidance,
                 required_evidence=list(case.policy_requirements),
-                recommended_strategy=case.recommended_strategy,
             )
         return VisibleCase(
             case_id=case.case_id,

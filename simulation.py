@@ -73,11 +73,13 @@ class CaseProgress:
     current_strategy: StrategyName | None = None
     final_resolution: str | None = None
     resolution_status: str = "open"
+    resolved_at_step: int | None = None
     duplicate_queries: int = 0
     invalid_actions: int = 0
     submit_attempts: int = 0
     deadline_penalized: bool = False
     notes: list[str] = field(default_factory=list)
+    representment_note: str | None = None
 
 
 @dataclass
@@ -224,7 +226,7 @@ TASKS: dict[str, TaskScenario] = {
             "A card-not-present fraud dispute with mixed signals. Strong account-linkage evidence exists, "
             "but payment mismatch artifacts will hurt the case if attached."
         ),
-        max_steps=12,
+        max_steps=10,
         cases=(
             InternalCase(
                 case_id="CB-M1",
@@ -238,7 +240,7 @@ TASKS: dict[str, TaskScenario] = {
                     "The order used a known account and device, but AVS/CVV mismatches were present. "
                     "Winning requires emphasizing customer-account linkage and avoiding mismatch artifacts."
                 ),
-                deadline_step=9,
+                deadline_step=7,
                 optimal_strategy="contest",
                 acceptable_strategies=("accept_chargeback",),
                 policy_guidance=(
@@ -341,7 +343,7 @@ TASKS: dict[str, TaskScenario] = {
             "A real operations queue with three disputes. Two should be actioned quickly, and one should be conceded. "
             "The step budget leaves little room for waste."
         ),
-        max_steps=18,
+        max_steps=15,
         cases=(
             InternalCase(
                 case_id="CB-H1",
@@ -582,13 +584,47 @@ TASKS: dict[str, TaskScenario] = {
 
 
 def get_task(task_id: str) -> TaskScenario:
-    """Look up a task or raise KeyError."""
+    """Look up a built-in task or generate one from a ``generated_*`` id."""
 
-    return TASKS[task_id]
+    if task_id in TASKS:
+        return TASKS[task_id]
+
+    # Support generated task ids: generated_{difficulty}_s{seed}
+    import re
+
+    m = re.match(r"^generated_(easy|medium|hard)_s(\d+)$", task_id)
+    if m:
+        try:
+            from .case_generator import generate_task
+        except ImportError:  # pragma: no cover
+            from case_generator import generate_task
+        difficulty = m.group(1)
+        seed = int(m.group(2))
+        return generate_task(seed, difficulty=difficulty)  # type: ignore[arg-type]
+
+    # Support ISO-derived task ids: iso_{difficulty}_{index}
+    m_iso = re.match(r"^iso_(easy|medium|hard)_(\d+)$", task_id)
+    if m_iso:
+        try:
+            from .iso_adapter import build_iso_task, load_iso_rows
+        except ImportError:  # pragma: no cover
+            from iso_adapter import build_iso_task, load_iso_rows
+        difficulty = m_iso.group(1)
+        task_index = int(m_iso.group(2))
+        rows = load_iso_rows()
+        if rows:
+            import random as _rng_mod
+            shuffled = list(rows)
+            _rng_mod.Random(42).shuffle(shuffled)
+            task = build_iso_task(shuffled, difficulty=difficulty, start_index=task_index * 4, task_index=task_index)
+            if task is not None:
+                return task
+
+    raise ValueError(f"Unknown task_id '{task_id}'. Available: {', '.join(TASKS)}")
 
 
 def list_tasks() -> list[TaskScenario]:
-    """Return tasks in a stable order."""
+    """Return built-in tasks in a stable order."""
 
     ordered_ids = [
         "goods_not_received_easy",

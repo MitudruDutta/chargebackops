@@ -51,7 +51,6 @@ class PolicyView(BaseModel):
     reason_code: str
     guidance: str
     required_evidence: list[str] = Field(default_factory=list)
-    recommended_strategy: StrategyName
 
 
 class VisibleCase(BaseModel):
@@ -116,6 +115,7 @@ class CaseScoreBreakdown(BaseModel):
     deadline_compliance: float
     efficiency: float
     outcome_quality: float
+    note_quality: float = 0.0
     weighted_score: float
     final_resolution: str
     notes: str
@@ -167,13 +167,14 @@ class ChargebackOpsAction(Action):
     """Action schema for ChargebackOps."""
 
     action_type: ActionType
-    case_id: str | None = Field(default=None, description="Target case id when applicable")
+    case_id: str | None = Field(default=None, max_length=64, description="Target case id when applicable")
     system_name: SystemName | None = Field(
         default=None,
         description="System to query when action_type is query_system",
     )
     evidence_ids: list[str] = Field(
         default_factory=list,
+        max_length=20,
         description="Evidence ids to attach or remove",
     )
     strategy: StrategyName | None = Field(
@@ -182,6 +183,7 @@ class ChargebackOpsAction(Action):
     )
     note: str | None = Field(
         default=None,
+        max_length=500,
         description="Optional short rationale for the action",
     )
 
