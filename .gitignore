@@ -1,13 +1,44 @@
+# Environment and secrets
 .env
+.env.*
+!.env.example
+
+# Virtual environments
 .venv/
 venv/
+
+# Python bytecode
 __pycache__/
 *.py[cod]
+*.pyo
+
+# Testing
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Linting / typing
 .mypy_cache/
 .ruff_cache/
+
+# OS
 .DS_Store
-chargeback_ops/__pycache__/
-chargeback_ops/.pytest_cache/
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Local datasets (1.2GB+ — not for version control)
+data/
+
+# Claude Code state
+.claude/
+
+# Logs
+*.log

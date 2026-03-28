@@ -128,6 +128,37 @@ def _best_open_case(queue: list[dict[str, Any]]) -> dict[str, Any] | None:
     )[0]
 
 
+_NOTE_TEMPLATES: dict[str, str] = {
+    "goods_not_received": (
+        "Order confirmation and carrier delivery confirmation establish fulfillment. "
+        "The shipment was delivered to the customer address on file."
+    ),
+    "fraud_cnp": (
+        "Prior good order linkage and customer account confirmation tie the cardholder "
+        "to the transaction. No mismatch artifacts attached."
+    ),
+    "product_not_as_described": (
+        "Product listing verification confirms the item matches the description. "
+        "Return policy documentation shows the customer bypassed the return process."
+    ),
+    "service_not_provided": (
+        "Service completion record and customer acknowledgment confirm the service "
+        "was delivered as agreed."
+    ),
+}
+
+
+def _build_representment_note(visible_case: dict[str, Any]) -> str:
+    """Generate a representment note from case context."""
+    reason = visible_case.get("reason_code", "")
+    base = _NOTE_TEMPLATES.get(reason, f"Contesting {reason.replace('_', ' ')} dispute with attached evidence.")
+    attached = visible_case.get("attached_evidence", [])
+    if attached:
+        titles = [e["title"] for e in attached[:3]]
+        base += f" Evidence: {', '.join(titles)}."
+    return base[:500]
+
+
 def _visible_case_deadline(queue: list[dict[str, Any]], case_id: str) -> int:
     for case in queue:
         if case["case_id"] == case_id:
@@ -141,13 +172,21 @@ def _rank_attachable(item: dict[str, Any]) -> int:
         return 999
     if "signature" in text:
         return 0
+    if "completion" in text or "booking" in text:
+        return 0
+    if "listing" in text:
+        return 0
+    if "duplicate" in text:
+        return 1
     if "delivery" in text:
         return 1
     if "prior" in text or "account" in text or "authenticated" in text:
         return 1
+    if "return policy" in text or "refund" in text or "cancel" in text:
+        return 2
     if "confirmation" in text:
         return 2
-    if "refund" in text or "cancellation" in text:
+    if "cancellation" in text:
         return 2
     return 4
 
@@ -170,8 +209,14 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
     open_cases = [case for case in queue if case["status"] == "open"]
     candidates: list[CandidateAction] = []
 
+    # Prefer cases that skip retrieve_policy (cheaper to resolve) when deadlines are equal.
+    _FAST_REASON_CODES = {"goods_not_received", "credit_not_processed", "duplicate_processing"}
+
+    def _case_priority(item):
+        return (item["steps_until_deadline"], 0 if item["reason_code"] in _FAST_REASON_CODES else 1, -item["amount"])
+
     if visible_case is None:
-        for case in sorted(open_cases, key=lambda item: (item["steps_until_deadline"], -item["amount"])):
+        for case in sorted(open_cases, key=_case_priority):
             candidates.append(
                 CandidateAction(
                     action=ChargebackOpsAction(action_type="select_case", case_id=case["case_id"]),
@@ -185,7 +230,7 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
 
     case_id = visible_case["case_id"]
     if visible_case["status"] != "open":
-        for case in sorted(open_cases, key=lambda item: (item["steps_until_deadline"], -item["amount"])):
+        for case in sorted(open_cases, key=_case_priority):
             candidates.append(
                 CandidateAction(
                     action=ChargebackOpsAction(action_type="select_case", case_id=case["case_id"]),
@@ -210,24 +255,97 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
             )
         )
 
+    reason_code = visible_case["reason_code"]
+
+    # Reason codes with deterministic strategies — no need to retrieve policy.
+    _DETERMINISTIC_STRATEGY: dict[str, str] = {
+        "goods_not_received": "contest",
+        "fraud_cnp": "contest",
+        "service_not_provided": "contest",
+        "credit_not_processed": "issue_refund",
+        "duplicate_processing": "issue_refund",
+    }
+
+    steps_remaining = observation.get("steps_remaining", 999)
+    budget_per_case = steps_remaining / max(len(open_cases), 1)
+
     policy = visible_case.get("policy")
     if policy is None:
-        candidates.append(
-            CandidateAction(
-                action=ChargebackOpsAction(action_type="retrieve_policy", case_id=case_id),
-                summary="Retrieve the chargeback policy for the selected reason code.",
+        if reason_code in _DETERMINISTIC_STRATEGY:
+            inferred_strategy = _DETERMINISTIC_STRATEGY[reason_code]
+        else:
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(action_type="retrieve_policy", case_id=case_id),
+                    summary="Retrieve the chargeback policy for the selected reason code.",
+                )
             )
-        )
-        recommended_strategy = None
+            inferred_strategy = None
     else:
-        recommended_strategy = policy["recommended_strategy"]
-
-    reason_code = visible_case["reason_code"]
+        guidance_text = policy.get("guidance", "").lower()
+        if "do not contest" in guidance_text or "concede" in guidance_text or "not supportable" in guidance_text:
+            inferred_strategy = "accept_chargeback"
+        elif "refund immediately" in guidance_text or "refund" in guidance_text and "contest" not in guidance_text:
+            inferred_strategy = "issue_refund"
+        else:
+            inferred_strategy = "contest"
     systems_revealed = set(visible_case.get("systems_revealed", []))
     current_strategy = visible_case.get("current_strategy")
     retrieved_items = visible_case.get("retrieved_evidence", [])
     attached_ids = {item["evidence_id"] for item in visible_case.get("attached_evidence", [])}
     attachable_ids = _batch_attachable_ids(retrieved_items, attached_ids)
+
+    # ── DEADLINE URGENCY: if near deadline and we have evidence, submit/resolve NOW ──
+    if current_deadline <= 1:
+        if current_strategy is not None and len(attached_ids) >= 1 and current_strategy == "contest":
+            candidates.insert(
+                0,
+                CandidateAction(
+                    action=ChargebackOpsAction(action_type="submit_representment", case_id=case_id, note=_build_representment_note(visible_case)),
+                    summary=f"URGENT: Submit representment for {case_id} — deadline imminent.",
+                ),
+            )
+            return candidates
+        if current_strategy in {"accept_chargeback", "issue_refund"}:
+            candidates.insert(
+                0,
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="resolve_case",
+                        case_id=case_id,
+                        strategy=current_strategy,
+                    ),
+                    summary=f"URGENT: Resolve {case_id} with {current_strategy} — deadline imminent.",
+                ),
+            )
+            return candidates
+
+    # ── BUDGET PRESSURE: if more open cases than steps, fast-resolve concedable ──
+    if steps_remaining <= len(open_cases) * 2 and inferred_strategy in {
+        "accept_chargeback", "issue_refund",
+    }:
+        target_strat = inferred_strategy
+        if current_strategy != target_strat:
+            candidates.insert(
+                0,
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="set_strategy", case_id=case_id, strategy=target_strat,
+                    ),
+                    summary=f"Fast-set strategy to {target_strat} under budget pressure.",
+                ),
+            )
+            return candidates
+        candidates.insert(
+            0,
+            CandidateAction(
+                action=ChargebackOpsAction(
+                    action_type="resolve_case", case_id=case_id, strategy=target_strat,
+                ),
+                summary=f"Fast-resolve {case_id} with {target_strat} under budget pressure.",
+            ),
+        )
+        return candidates
 
     if reason_code == "goods_not_received":
         for system_name in ["orders", "shipping"]:
@@ -242,13 +360,13 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
                         summary=f"Query the {system_name} system for evidence on case {case_id}.",
                     )
                 )
-        if attachable_ids and len(attached_ids) < 2:
+        if attachable_ids and len(attached_ids) < 3:
             candidates.append(
                 CandidateAction(
                     action=ChargebackOpsAction(
                         action_type="add_evidence",
                         case_id=case_id,
-                        evidence_ids=attachable_ids[:2],
+                        evidence_ids=attachable_ids[:3],
                     ),
                     summary=f"Attach the strongest delivery evidence for case {case_id}.",
                 )
@@ -270,15 +388,18 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
                     action=ChargebackOpsAction(
                         action_type="submit_representment",
                         case_id=case_id,
+                        note=_build_representment_note(visible_case),
                     ),
                     summary="Submit the current representment package.",
                 )
             )
 
     elif reason_code == "fraud_cnp":
-        should_contest = recommended_strategy == "contest"
+        should_contest = inferred_strategy == "contest"
         if should_contest:
-            for system_name in ["risk", "support", "orders"]:
+            # Under tight budgets, skip optional 'orders' query to save a step.
+            fraud_systems = ["risk", "support"] if budget_per_case < 7 else ["risk", "support", "orders"]
+            for system_name in fraud_systems:
                 if system_name not in systems_revealed:
                     candidates.append(
                         CandidateAction(
@@ -290,13 +411,13 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
                             summary=f"Query the {system_name} system for evidence on case {case_id}.",
                         )
                     )
-            if attachable_ids and len(attached_ids) < 2:
+            if attachable_ids and len(attached_ids) < 3:
                 candidates.append(
                     CandidateAction(
                         action=ChargebackOpsAction(
                             action_type="add_evidence",
                             case_id=case_id,
-                            evidence_ids=attachable_ids[:2],
+                            evidence_ids=attachable_ids[:3],
                         ),
                         summary=f"Attach the strongest account-linkage evidence for case {case_id}.",
                     )
@@ -318,6 +439,7 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
                         action=ChargebackOpsAction(
                             action_type="submit_representment",
                             case_id=case_id,
+                            note=_build_representment_note(visible_case),
                         ),
                         summary="Submit the current representment package.",
                     )
@@ -344,19 +466,8 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
             )
         )
 
-    elif reason_code == "credit_not_processed":
-        for system_name in ["support", "refunds"]:
-            if system_name not in systems_revealed:
-                candidates.append(
-                    CandidateAction(
-                        action=ChargebackOpsAction(
-                            action_type="query_system",
-                            case_id=case_id,
-                            system_name=system_name,
-                        ),
-                        summary=f"Query the {system_name} system for evidence on case {case_id}.",
-                    )
-                )
+    elif reason_code in {"credit_not_processed", "duplicate_processing"}:
+        # Fast-path: set strategy and resolve immediately — don't waste steps querying
         if current_strategy != "issue_refund":
             candidates.append(
                 CandidateAction(
@@ -388,6 +499,235 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
                 summary="Accept the chargeback as a fallback resolution.",
             )
         )
+
+    elif reason_code == "product_not_as_described":
+        if inferred_strategy in {"accept_chargeback", "issue_refund"}:
+            # Guidance says concede — fast-path
+            target = inferred_strategy
+            if current_strategy != target:
+                candidates.append(
+                    CandidateAction(
+                        action=ChargebackOpsAction(action_type="set_strategy", case_id=case_id, strategy=target),
+                        summary=f"Set strategy to {target} — listing defense not supportable.",
+                    )
+                )
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(action_type="resolve_case", case_id=case_id, strategy=target),
+                    summary=f"Resolve with {target} — conceding per policy guidance.",
+                )
+            )
+        else:
+            for system_name in ["orders", "support", "shipping"]:
+                if system_name not in systems_revealed:
+                    candidates.append(
+                        CandidateAction(
+                            action=ChargebackOpsAction(
+                                action_type="query_system",
+                                case_id=case_id,
+                                system_name=system_name,
+                            ),
+                            summary=f"Query the {system_name} system for listing and return-process evidence on case {case_id}.",
+                        )
+                    )
+            if attachable_ids and len(attached_ids) < 3:
+                candidates.append(
+                    CandidateAction(
+                        action=ChargebackOpsAction(
+                            action_type="add_evidence",
+                            case_id=case_id,
+                            evidence_ids=attachable_ids[:3],
+                        ),
+                        summary=f"Attach listing accuracy and return-policy evidence for case {case_id}.",
+                    )
+                )
+            if current_strategy != "contest":
+                candidates.append(
+                    CandidateAction(
+                        action=ChargebackOpsAction(
+                            action_type="set_strategy",
+                            case_id=case_id,
+                            strategy="contest",
+                        ),
+                        summary="Set the strategy to contest the dispute.",
+                    )
+                )
+            if len(attached_ids) >= 2:
+                candidates.append(
+                    CandidateAction(
+                        action=ChargebackOpsAction(
+                            action_type="submit_representment",
+                            case_id=case_id,
+                            note=_build_representment_note(visible_case),
+                        ),
+                        summary="Submit the current representment package.",
+                    )
+                )
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="resolve_case",
+                        case_id=case_id,
+                        strategy="issue_refund",
+                    ),
+                    summary="Issue a refund as a fallback if the listing defense is not supportable.",
+                )
+            )
+
+    elif reason_code == "service_not_provided":
+        if inferred_strategy in {"accept_chargeback", "issue_refund"}:
+            target = inferred_strategy
+            if current_strategy != target:
+                candidates.append(
+                    CandidateAction(
+                        action=ChargebackOpsAction(action_type="set_strategy", case_id=case_id, strategy=target),
+                        summary=f"Set strategy to {target} — service defense not supportable.",
+                    )
+                )
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(action_type="resolve_case", case_id=case_id, strategy=target),
+                    summary=f"Resolve with {target} — conceding per policy guidance.",
+                )
+            )
+        else:
+            for system_name in ["orders", "support"]:
+                if system_name not in systems_revealed:
+                    candidates.append(
+                        CandidateAction(
+                            action=ChargebackOpsAction(
+                                action_type="query_system",
+                                case_id=case_id,
+                                system_name=system_name,
+                            ),
+                            summary=f"Query the {system_name} system for booking and completion evidence on case {case_id}.",
+                        )
+                    )
+        if attachable_ids and len(attached_ids) < 3:
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="add_evidence",
+                        case_id=case_id,
+                        evidence_ids=attachable_ids[:3],
+                    ),
+                    summary=f"Attach booking and completion evidence for case {case_id}.",
+                )
+            )
+        if current_strategy != "contest":
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="set_strategy",
+                        case_id=case_id,
+                        strategy="contest",
+                    ),
+                    summary="Set the strategy to contest the dispute.",
+                )
+            )
+        if len(attached_ids) >= 2:
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="submit_representment",
+                        case_id=case_id,
+                        note=_build_representment_note(visible_case),
+                    ),
+                    summary="Submit the current representment package.",
+                )
+            )
+        candidates.append(
+            CandidateAction(
+                action=ChargebackOpsAction(
+                    action_type="resolve_case",
+                    case_id=case_id,
+                    strategy="issue_refund",
+                ),
+                summary="Issue a refund as a fallback if the service-delivery defense is weak.",
+            )
+        )
+
+    elif inferred_strategy in {"accept_chargeback", "issue_refund"}:
+        for system_name in ["support", "refunds", "payment"]:
+            if system_name not in systems_revealed:
+                candidates.append(
+                    CandidateAction(
+                        action=ChargebackOpsAction(
+                            action_type="query_system",
+                            case_id=case_id,
+                            system_name=system_name,
+                        ),
+                        summary=f"Query the {system_name} system for concession evidence on case {case_id}.",
+                    )
+                )
+        if current_strategy != inferred_strategy:
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="set_strategy",
+                        case_id=case_id,
+                        strategy=inferred_strategy,
+                    ),
+                    summary=f"Set the strategy to {inferred_strategy}.",
+                )
+            )
+        candidates.append(
+            CandidateAction(
+                action=ChargebackOpsAction(
+                    action_type="resolve_case",
+                    case_id=case_id,
+                    strategy=inferred_strategy,
+                ),
+                summary=f"Resolve the case with strategy {inferred_strategy}.",
+            )
+        )
+
+    else:
+        for system_name in ["orders", "support", "shipping", "risk"]:
+            if system_name not in systems_revealed:
+                candidates.append(
+                    CandidateAction(
+                        action=ChargebackOpsAction(
+                            action_type="query_system",
+                            case_id=case_id,
+                            system_name=system_name,
+                        ),
+                        summary=f"Query the {system_name} system for additional evidence on case {case_id}.",
+                    )
+                )
+        if attachable_ids and len(attached_ids) < 3:
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="add_evidence",
+                        case_id=case_id,
+                        evidence_ids=attachable_ids[:3],
+                    ),
+                    summary=f"Attach the strongest currently available evidence for case {case_id}.",
+                )
+            )
+        if current_strategy != "contest":
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="set_strategy",
+                        case_id=case_id,
+                        strategy="contest",
+                    ),
+                    summary="Set the strategy to contest the dispute.",
+                )
+            )
+        if len(attached_ids) >= 1:
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="submit_representment",
+                        case_id=case_id,
+                        note=_build_representment_note(visible_case),
+                    ),
+                    summary="Submit the current representment package.",
+                )
+            )
 
     if visible_case.get("inspection_notes") is None and observation["steps_remaining"] > 3:
         candidates.append(
@@ -528,7 +868,7 @@ def _compact_visible_case(visible_case: dict[str, Any] | None) -> dict[str, Any]
         ],
         "policy": (
             {
-                "recommended_strategy": visible_case["policy"]["recommended_strategy"],
+                "guidance": visible_case["policy"]["guidance"],
                 "required_evidence": visible_case["policy"]["required_evidence"],
             }
             if visible_case.get("policy")

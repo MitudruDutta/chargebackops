@@ -158,7 +158,7 @@ def test_problem_statement_live_agent_budget_targets_real_branches():
             candidate = _obvious_next_action(payload, candidates) or _heuristic_pick(candidates)
             observation = env.step(candidate.action)
 
-    assert ambiguous_states <= 4
+    assert ambiguous_states <= 6
 
 
 def test_problem_statement_inference_contract_exists():

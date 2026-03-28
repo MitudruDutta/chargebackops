@@ -85,6 +85,36 @@ def tasks() -> TasksResponse:
     )
 
 
+@app.get("/generate")
+def generate_tasks(
+    seed: int = 42,
+    easy: int = 2,
+    medium: int = 2,
+    hard: int = 2,
+) -> list[dict]:
+    """Generate parametric tasks from a seed for infinite scenario variety."""
+
+    try:
+        from case_generator import generate_task_suite
+    except ImportError:  # pragma: no cover
+        from ..case_generator import generate_task_suite
+
+    suite = generate_task_suite(
+        base_seed=seed, easy_count=easy, medium_count=medium, hard_count=hard,
+    )
+    return [
+        {
+            "task_id": t.task_id,
+            "title": t.title,
+            "difficulty": t.difficulty,
+            "objective": t.objective,
+            "case_count": len(t.cases),
+            "max_steps": t.max_steps,
+        }
+        for t in suite
+    ]
+
+
 @app.get("/grader")
 @app.post("/grader")
 def grader(episode_id: str | None = None):
