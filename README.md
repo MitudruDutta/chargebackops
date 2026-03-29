@@ -1,3 +1,13 @@
+---
+title: ChargebackOps
+emoji: "💳"
+colorFrom: indigo
+colorTo: gray
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # ChargebackOps
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
