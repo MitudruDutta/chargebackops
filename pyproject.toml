@@ -27,12 +27,27 @@ dev = [
 
 [project.scripts]
 server = "chargeback_ops.server.app:main"
-chargebackops-baseline = "chargeback_ops.baseline_runner:main"
+chargebackops-baseline = "chargeback_ops.runners.baseline_runner:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["chargeback_ops", "chargeback_ops.server"]
-package-dir = { "chargeback_ops" = ".", "chargeback_ops.server" = "server" }
+packages = [
+    "chargeback_ops",
+    "chargeback_ops.core",
+    "chargeback_ops.evaluation",
+    "chargeback_ops.runners",
+    "chargeback_ops.scenarios",
+    "chargeback_ops.server",
+    "chargeback_ops.connectors",
+]
+[tool.setuptools.package-dir]
+"chargeback_ops" = "."
+"chargeback_ops.core" = "core"
+"chargeback_ops.evaluation" = "evaluation"
+"chargeback_ops.runners" = "runners"
+"chargeback_ops.scenarios" = "scenarios"
+"chargeback_ops.server" = "server"
+"chargeback_ops.connectors" = "connectors"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
