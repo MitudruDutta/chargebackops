@@ -20,41 +20,38 @@ Chargeback dispute handling is a real operations workflow. Analysts must:
 
 That makes ChargebackOps a good benchmark for tool-using agents. It measures retrieval quality, decision quality, prioritization, and operational restraint in a controlled environment with deterministic scoring.
 
-## Architecture
+## System Architecture
 
 ```mermaid
 graph TB
-    subgraph Agent Layer
-        INF[inference.py<br/>OpenAI-compatible client]
-        BL[baseline_runner.py<br/>Heuristic policy]
+    subgraph Agent["Agent Layer"]
+        INF["inference.py\nOpenAI-compatible client\nProvider fallback chain"]
+        BL["baseline_runner.py\nThree-tier decision pipeline\nHeuristic + LLM hybrid"]
     end
 
-    subgraph API Layer
-        APP[FastAPI server<br/>server/app.py]
-        WS[OpenEnv WebSocket<br/>client.py]
+    subgraph API["API Layer"]
+        APP["FastAPI server\nserver/app.py"]
+        WS["OpenEnv WebSocket\nclient.py"]
     end
 
-    subgraph Environment Core
-        ENV[ChargebackOpsEnvironment<br/>step / reset / state]
-        SIM[Simulation Engine<br/>simulation.py]
-        GRD[Deterministic Grader<br/>grading.py]
-        STORE[Episode Store<br/>episode_store.py]
+    subgraph Core["Environment Core"]
+        ENV["ChargebackOpsEnvironment\nstep() / reset() / state()"]
+        SIM["Simulation Engine\nsimulation.py"]
+        GRD["Deterministic Grader\n7-dimension scoring"]
+        STORE["Episode Store\nepisode_store.py"]
     end
 
-    subgraph Task Sources
-        FIXED[Built-in Tasks<br/>3 handcrafted scenarios]
-        GEN[Parametric Generator<br/>case_generator.py]
-        ISO[ISO 20022 Adapter<br/>iso_adapter.py]
-        STRIPE[Stripe Connector<br/>connectors/stripe_sandbox.py]
+    subgraph Tasks["Task Sources"]
+        FIXED["Built-in Tasks\n3 handcrafted scenarios"]
+        GEN["Parametric Generator\ncase_generator.py\nSeeded RNG, infinite tasks"]
+        ISO["ISO 20022 Adapter\niso_adapter.py\n300 real chargeback records"]
+        STRIPE["Stripe Connector\nconnectors/stripe_sandbox.py\nLive API or synthetic disputes"]
     end
 
-    subgraph Merchant Systems
-        ORD[Orders]
-        PAY[Payment]
-        SHIP[Shipping]
-        SUP[Support]
-        REF[Refunds]
-        RISK[Risk]
+    subgraph Systems["Merchant Systems (6)"]
+        ORD["Orders"] --- PAY["Payment"]
+        SHIP["Shipping"] --- SUP["Support"]
+        REF["Refunds"] --- RISK["Risk"]
     end
 
     INF --> APP
@@ -68,71 +65,187 @@ graph TB
     SIM --> GEN
     SIM --> ISO
     SIM --> STRIPE
-    ENV --> ORD
-    ENV --> PAY
-    ENV --> SHIP
-    ENV --> SUP
-    ENV --> REF
-    ENV --> RISK
+    ENV --> Systems
+```
+
+## Agent Decision Pipeline
+
+The agent operates a three-tier decision pipeline on every step. Each observation passes through candidate generation, obvious-move detection, and then either LLM or heuristic resolution.
+
+```mermaid
+flowchart TD
+    OBS["Observation\n(queue, visible_case, steps_remaining)"] --> CA
+
+    subgraph Tier1["Tier 1: Candidate Generation"]
+        CA["candidate_actions()"] --> HARM{"Harmful evidence\nattached?"}
+        HARM -->|"Yes"| REM["remove_evidence\n(immediate return)"]
+        HARM -->|"No"| DL{"Deadline\n<= 1 step?"}
+        DL -->|"Yes"| URG["URGENT: submit or resolve\n(immediate return)"]
+        DL -->|"No"| BUD{"Budget too tight\nto contest?"}
+        BUD -->|"Yes: steps < 5 or\nlowest-value in triage"| CONC["Fast-concede\nwith issue_refund"]
+        BUD -->|"No"| BP{"Budget pressure?\nsteps <= cases * 2"}
+        BP -->|"Yes + concedable"| FAST["Fast set_strategy\n+ resolve_case"]
+        BP -->|"No"| RC{"Reason code\nhandler"}
+    end
+
+    subgraph Handlers["Reason Code Handlers"]
+        RC --> GNR["goods_not_received\nquery orders+shipping\nattach delivery proof\ncontest"]
+        RC --> FRD["fraud_cnp\ncheck inferred_strategy\nquery risk+support(+orders)\ncontest or accept"]
+        RC --> CNP["credit_not_processed\nduplicate_processing\nset issue_refund\nresolve immediately"]
+        RC --> PNA["product_not_as_described\nretrieve policy first\ncontest or accept per guidance"]
+        RC --> SNP["service_not_provided\nretrieve policy first\ncontest or accept per guidance"]
+        RC --> UNK["Unknown reason code\nquery all systems\ndefault to contest"]
+    end
+
+    subgraph Tier2["Tier 2: Obvious Move Detection"]
+        GNR & FRD & CNP & PNA & SNP & UNK --> OBV["_obvious_next_action()"]
+        OBV --> OC{"Only 1 candidate\nor all same type?"}
+        OC -->|"Yes"| TAKE["Take it\n(skip LLM)"]
+    end
+
+    subgraph Tier3["Tier 3: Ambiguity Resolution"]
+        OC -->|"No: genuine\nambiguity"| LLM{"LLM available?"}
+        LLM -->|"Yes"| CALL["Provider call\nOpenRouter → Gemini → Groq\nJSON: candidate_index + rationale"]
+        LLM -->|"No"| HEUR["_heuristic_pick()\nFirst candidate wins"]
+        CALL -->|"Success"| ACT["Execute chosen action"]
+        CALL -->|"All providers fail"| HEUR
+    end
+
+    TAKE --> ACT
+    HEUR --> ACT
+    REM --> ACT
+    URG --> ACT
+    CONC --> ACT
+    FAST --> ACT
+    ACT --> STEP["env.step(action)\nReturns new observation"]
+    STEP --> DONE{"Episode done?"}
+    DONE -->|"No"| OBS
+    DONE -->|"Yes"| GRADE["Grader scores\neach case"]
+
+    style OBS fill:#1a3a5c,color:#fff
+    style GRADE fill:#2d5016,color:#fff
+    style URG fill:#8b0000,color:#fff
+    style CONC fill:#8b4513,color:#fff
+    style REM fill:#800080,color:#fff
+```
+
+## Case Triage (Multi-Case Scenarios)
+
+When the agent faces multiple open cases with insufficient budget to contest all, it employs a triage strategy:
+
+```mermaid
+flowchart LR
+    START["Multiple open cases\ntotal_cost > budget"] --> SORT["Sort by:\n1. Deterministic codes first\n2. Highest amount first"]
+    SORT --> LOOP{"Next case"}
+    LOOP --> DET{"Deterministic\nstrategy?"}
+    DET -->|"Yes: goods_not_received\ncredit_not_processed\nduplicate_processing"| CHEAP["Handle first\n(3-6 steps, no policy needed)"]
+    DET -->|"No: fraud_cnp\nproduct_not_as_described\nservice_not_provided"| CHECK{"Steps remaining\n>= 5?"}
+    CHECK -->|"Yes"| CONTEST["Retrieve policy\nContest or concede\nper guidance"]
+    CHECK -->|"No"| CONCEDE["Fast-concede\nwith issue_refund\n(1 step)"]
+    CHEAP --> NEXT["Done, next case"]
+    CONTEST --> NEXT
+    CONCEDE --> NEXT
+    NEXT --> LOOP
+
+    style START fill:#1a3a5c,color:#fff
+    style CONCEDE fill:#8b4513,color:#fff
+    style CHEAP fill:#2d5016,color:#fff
 ```
 
 ## Episode Workflow
 
 ```mermaid
 flowchart TD
-    A[reset&#40;task_id&#41;] --> B[Select case from queue]
-    B --> C{Reason code<br/>deterministic?}
-    C -->|Yes| D[Skip policy retrieval<br/>Infer strategy directly]
-    C -->|No| E[Retrieve policy guidance]
-    D --> F[Query merchant systems<br/>for evidence]
-    E --> F
-    F --> G[Attach relevant evidence<br/>Avoid harmful artifacts]
-    G --> H[Set strategy]
-    H --> I{Strategy?}
-    I -->|contest| J[Generate representment note<br/>Submit package]
-    I -->|accept / refund| K[Resolve case]
-    J --> L{More open cases?}
-    K --> L
-    L -->|Yes| M{Deadline urgency?}
-    M -->|Urgent| N[Switch to urgent case<br/>Fast-resolve]
-    M -->|Normal| B
-    N --> L
-    L -->|No / Max steps| O[Grader computes<br/>final score 0.0 - 1.0]
+    A["reset(task_id)"] --> SEL["Select case from queue\n(priority: fast codes first,\nthen by amount desc)"]
+    SEL --> DET{"Reason code in\ndeterministic map?"}
+    DET -->|"goods_not_received"| SKIP["Infer strategy: contest\nSkip policy retrieval"]
+    DET -->|"credit_not_processed\nduplicate_processing"| REFUND["Infer strategy: issue_refund\nResolve immediately"]
+    DET -->|"fraud_cnp\nproduct_not_as_described\nservice_not_provided\nor unknown"| POL["Retrieve policy guidance"]
+    POL --> PARSE{"Parse guidance"}
+    PARSE -->|"'do not contest'\n'concede'\n'not supportable'"| ACCEPT["Strategy: accept_chargeback"]
+    PARSE -->|"'refund immediately'"| REFUND2["Strategy: issue_refund"]
+    PARSE -->|"Otherwise"| CONT["Strategy: contest"]
+
+    SKIP --> QUERY["Query merchant systems\n(deadline-aware: fewer queries\nwhen deadline is tight)"]
+    CONT --> QUERY
+
+    QUERY --> ATTACH["Attach all non-harmful evidence\n(filter by 6 harmful keywords:\nmismatch, failed, declined,\nsuspicious, flagged, fraud risk)"]
+    ATTACH --> HARMFUL{"Any harmful\nevidence attached?"}
+    HARMFUL -->|"Yes"| REMOVE["remove_evidence\n(clean before submit)"]
+    HARMFUL -->|"No"| STRAT["Set strategy"]
+    REMOVE --> STRAT
+
+    STRAT --> SUBMIT["Generate representment note\n(policy keywords + evidence IDs)\nSubmit package"]
+
+    ACCEPT --> RESOLVE["Resolve case\n(accept_chargeback / issue_refund)"]
+    REFUND --> RESOLVE
+    REFUND2 --> RESOLVE
+
+    SUBMIT --> MORE{"More open cases?"}
+    RESOLVE --> MORE
+    MORE -->|"Yes"| NEAR{"Current case\nnear completion?"}
+    NEAR -->|"Yes (evidence attached,\n1-2 steps to finish)"| FINISH["Finish current case\nbefore switching"]
+    NEAR -->|"No"| SEL
+    FINISH --> MORE
+    MORE -->|"No / steps exhausted"| GRADE["Grader scores episode"]
 
     style A fill:#2d5016,color:#fff
-    style O fill:#1a3a5c,color:#fff
-    style N fill:#8b0000,color:#fff
+    style GRADE fill:#1a3a5c,color:#fff
+    style REMOVE fill:#800080,color:#fff
+    style REFUND fill:#8b4513,color:#fff
+    style REFUND2 fill:#8b4513,color:#fff
 ```
 
-## Grading Dimensions
+## Grading System
 
 ```mermaid
 pie title Case Score Weights
-    "Strategy Correctness" : 25
-    "Evidence Quality" : 20
-    "Packet Validity" : 15
-    "Deadline Compliance" : 15
-    "Efficiency" : 10
-    "Outcome Quality" : 10
-    "Note Quality" : 5
+    "Strategy Correctness (25%)" : 25
+    "Evidence Quality (20%)" : 20
+    "Packet Validity (15%)" : 15
+    "Deadline Compliance (15%)" : 15
+    "Efficiency (10%)" : 10
+    "Outcome Quality (10%)" : 10
+    "Note Quality (5%)" : 5
 ```
 
-Each case is scored across seven dimensions and weighted by financial impact. The episode score normalizes across all cases to `[0.0, 1.0]`.
+| Dimension | How It's Scored |
+|---|---|
+| **Strategy Correctness** | 1.0 = optimal strategy, 0.55 = acceptable fallback, 0.0 = wrong |
+| **Evidence Quality** | Contest: 0.7 × (required attached / total required) + 0.3 × (helpful / total helpful) − 0.25 per harmful. Non-contest: 1.0 if clean, 0.7 otherwise |
+| **Packet Validity** | Binary: 1.0 if all required evidence attached AND zero harmful, else 0.0 |
+| **Deadline Compliance** | Binary: 1.0 if resolved before deadline step, else 0.0 |
+| **Efficiency** | 1.0 − (duplicate_queries × 0.1 + submit_attempts × 0.05), min 0.1 |
+| **Outcome Quality** | 1.0 = optimal resolution, 0.6 = acceptable, 0.0 = wrong |
+| **Note Quality** | Contest only: word substance (20%) + policy keyword coverage (50%) + evidence ID refs (15%) − harmful keyword penalty (15%) |
 
-## Agent Performance (126 Episodes)
+Each case is weighted by financial impact. Episode score normalizes across all cases to `[0.0, 1.0]`.
 
-Results from the heuristic agent tested across all data sources:
+## LLM Provider Fallback Chain
 
-| Source | Easy | Medium | Hard |
-|---|---|---|---|
-| Built-in tasks | 0.968 | 0.960 | 0.778 |
-| Parametric (20 seeds) | 0.957 | 0.844 | 0.706 |
-| ISO 20022 real data (20 each) | 0.977 | 0.812 | 0.605 |
-| Stripe live API | 0.980 | 0.887 | 0.577 |
+```mermaid
+flowchart LR
+    P["Primary provider\n(configured in .env)"] -->|"Fail / timeout"| OR["OpenRouter\nopenai/gpt-oss-120b"]
+    OR -->|"Fail"| GEM["Google Gemini\ngemini-2.5-flash"]
+    GEM -->|"Fail"| GRQ["Groq\nllama-3.3-70b-versatile"]
+    GRQ -->|"All fail"| H["Heuristic fallback\n_heuristic_pick()"]
 
-**Overall: 0.819 avg across 126 episodes | 43.7% score >= 0.90 | 5.6% score < 0.50**
+    style P fill:#2d5016,color:#fff
+    style H fill:#8b4513,color:#fff
+```
 
-Heuristic vs bad-control gap: **+0.503** (threshold for "strong": 0.15)
+## Agent Performance (63 Episodes)
+
+Results from the heuristic agent across built-in and parametric tasks:
+
+| Source | Avg | >= 0.90 | < 0.50 | Min |
+|---|---|---|---|---|
+| Built-in tasks (3) | 0.933 | 2/3 | 0/3 | 0.865 |
+| Parametric easy (20) | 0.980 | 20/20 | 0/20 | 0.958 |
+| Parametric medium (20) | 0.868 | 12/20 | 0/20 | 0.624 |
+| Parametric hard (20) | 0.722 | 0/20 | 0/20 | 0.559 |
+
+**Overall: 0.861 avg | 54.0% score >= 0.90 | 0.0% score < 0.50**
 
 ## Task Sources
 
@@ -234,7 +347,7 @@ MODEL_NAME=openai/gpt-oss-120b
 HF_TOKEN=your_key
 ```
 
-Supported providers: OpenRouter, OpenAI, Groq, Anthropic-compatible gateways.
+Supported providers: OpenRouter, OpenAI, Google Gemini, Groq, Anthropic-compatible gateways.
 
 ## Hugging Face Deployment
 

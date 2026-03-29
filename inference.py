@@ -50,7 +50,7 @@ if load_dotenv is not None:  # pragma: no cover
 
 
 def _inference_timeout_seconds() -> float:
-    raw_value = os.getenv("INFERENCE_TIMEOUT_SECONDS", os.getenv("BASELINE_REQUEST_TIMEOUT_SECONDS", "4"))
+    raw_value = os.getenv("INFERENCE_TIMEOUT_SECONDS", os.getenv("BASELINE_REQUEST_TIMEOUT_SECONDS", "15"))
     try:
         return max(1.0, float(raw_value))
     except ValueError:
@@ -69,6 +69,8 @@ def _provider_label(base_url: str | None) -> str:
         return "openai"
     if "anthropic" in host:
         return "anthropic-compatible"
+    if "googleapis" in host or "generativelanguage" in host:
+        return "google"
     return host or "openai_client"
 
 
@@ -103,6 +105,19 @@ def _build_client() -> tuple[OpenAI | None, str | None, str]:
     return client, model_name, _provider_label(base_url)
 
 
+def _build_fallback_client() -> tuple[OpenAI | None, str | None]:
+    """Build a fallback client from Groq if the primary provider fails."""
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        return OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=groq_key,
+            timeout=_inference_timeout_seconds(),
+            max_retries=0,
+        ), "llama-3.3-70b-versatile"
+    return None, None
+
+
 def _pick_with_openai_client(
     client: OpenAI,
     model_name: str,
@@ -122,9 +137,9 @@ def _pick_with_openai_client(
                 {
                     "role": "system",
                     "content": (
-                        "You are a merchant chargeback analyst. Pick the single best next action. "
-                        "Prefer on-time, evidence-backed resolutions and avoid weak contests. "
-                        "Return valid JSON with keys candidate_index and rationale."
+                        "You are a merchant chargeback dispute analyst. Pick the single best next action from the candidates. "
+                        "Prioritize: 1) deadline-urgent cases, 2) evidence-backed contests, 3) fast concedes for weak cases. "
+                        "Avoid attaching harmful evidence. Return JSON: {\"candidate_index\": N, \"rationale\": \"brief reason\"}"
                     ),
                 },
                 {"role": "user", "content": payload},
@@ -173,6 +188,16 @@ def run_inference() -> BaselineRunResult:
                     candidates,
                 )
                 provider_calls_attempted += 1
+                # On primary failure, try the fallback provider.
+                if not succeeded:
+                    fb_client, fb_model = _build_fallback_client()
+                    if fb_client is not None and fb_model:
+                        candidate, fb_ok, fb_err = _pick_with_openai_client(
+                            fb_client, fb_model, observation_payload, candidates,
+                        )
+                        if fb_ok:
+                            succeeded = True
+                            error_label = None
                 provider_calls_succeeded += int(succeeded)
                 if not succeeded and error_label is not None:
                     provider_errors[error_label] = provider_errors.get(error_label, 0) + 1
