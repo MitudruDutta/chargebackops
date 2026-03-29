@@ -7,9 +7,9 @@ from uuid import uuid4
 from openenv.core.env_server.interfaces import Environment
 
 try:
-    from ..episode_store import record_report
-    from ..grading import grade_episode
-    from ..models import (
+    from ..core.episode_store import record_report
+    from ..evaluation.grading import grade_episode
+    from ..core.models import (
         ActionTraceItem,
         CaseQueueItem,
         CaseResolutionState,
@@ -20,11 +20,11 @@ try:
         PolicyView,
         VisibleCase,
     )
-    from ..simulation import ActionRecord, CaseProgress, InternalCase, get_task
+    from ..scenarios.simulation import ActionRecord, CaseProgress, InternalCase, get_task
 except ImportError:  # pragma: no cover
-    from episode_store import record_report
-    from grading import grade_episode
-    from models import (
+    from core.episode_store import record_report
+    from evaluation.grading import grade_episode
+    from core.models import (
         ActionTraceItem,
         CaseQueueItem,
         CaseResolutionState,
@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover
         PolicyView,
         VisibleCase,
     )
-    from simulation import ActionRecord, CaseProgress, InternalCase, get_task
+    from scenarios.simulation import ActionRecord, CaseProgress, InternalCase, get_task
 
 
 class ChargebackOpsEnvironment(

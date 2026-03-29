@@ -1,4 +1,4 @@
-from agent_brutal_audit import aggregate_results, run_episode
+from evaluation.agent_brutal_audit import aggregate_results, run_episode
 
 
 def test_heuristic_beats_bad_on_generated_suite():

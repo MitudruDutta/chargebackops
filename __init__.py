@@ -1,7 +1,7 @@
 """ChargebackOps OpenEnv package."""
 
-from .client import ChargebackOpsEnv
-from .models import (
+from .core.client import ChargebackOpsEnv
+from .core.models import (
     BaselineRunResult,
     ChargebackOpsAction,
     ChargebackOpsObservation,

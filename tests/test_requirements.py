@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from baseline_runner import _heuristic_pick, _obvious_next_action, candidate_actions
-from grading import grade_episode
-from models import ChargebackOpsAction
+from runners.baseline_runner import _heuristic_pick, _obvious_next_action, candidate_actions
+from evaluation.grading import grade_episode
+from core.models import ChargebackOpsAction
 from server.chargeback_ops_environment import ChargebackOpsEnvironment
-from simulation import get_task, list_tasks
+from scenarios.simulation import get_task, list_tasks
 
 
 def _run_heuristic_episode(task_id: str) -> tuple[float, float]:
@@ -162,7 +162,7 @@ def test_problem_statement_live_agent_budget_targets_real_branches():
 
 
 def test_problem_statement_inference_contract_exists():
-    content = Path("inference.py").read_text()
+    content = Path("runners/inference.py").read_text()
     assert "from openai import OpenAI" in content
     assert "API_BASE_URL" in content
     assert "MODEL_NAME" in content

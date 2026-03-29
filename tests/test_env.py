@@ -1,5 +1,5 @@
-from case_generator import generate_task
-from models import ChargebackOpsAction
+from scenarios.case_generator import generate_task
+from core.models import ChargebackOpsAction
 from server.chargeback_ops_environment import ChargebackOpsEnvironment
 
 

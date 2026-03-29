@@ -13,30 +13,30 @@ except Exception as exc:  # pragma: no cover
     ) from exc
 
 try:
-    from ..baseline_runner import run_baseline
-    from ..episode_store import get_report
-    from ..inference import run_inference
-    from ..models import (
+    from ..runners.baseline_runner import run_baseline
+    from ..core.episode_store import get_report
+    from ..runners.inference import run_inference
+    from ..core.models import (
         BaselineRunResult,
         ChargebackOpsAction,
         ChargebackOpsObservation,
         TasksResponse,
         TaskSummary,
     )
-    from ..simulation import list_tasks
+    from ..scenarios.simulation import list_tasks
     from .chargeback_ops_environment import ChargebackOpsEnvironment
 except ImportError:  # pragma: no cover
-    from baseline_runner import run_baseline
-    from episode_store import get_report
-    from inference import run_inference
-    from models import (
+    from runners.baseline_runner import run_baseline
+    from core.episode_store import get_report
+    from runners.inference import run_inference
+    from core.models import (
         BaselineRunResult,
         ChargebackOpsAction,
         ChargebackOpsObservation,
         TasksResponse,
         TaskSummary,
     )
-    from simulation import list_tasks
+    from scenarios.simulation import list_tasks
     from server.chargeback_ops_environment import ChargebackOpsEnvironment
 
 
@@ -95,9 +95,9 @@ def generate_tasks(
     """Generate parametric tasks from a seed for infinite scenario variety."""
 
     try:
-        from case_generator import generate_task_suite
+        from scenarios.case_generator import generate_task_suite
     except ImportError:  # pragma: no cover
-        from ..case_generator import generate_task_suite
+        from ..scenarios.case_generator import generate_task_suite
 
     suite = generate_task_suite(
         base_seed=seed, easy_count=easy, medium_count=medium, hard_count=hard,

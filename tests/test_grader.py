@@ -1,6 +1,6 @@
-from grading import grade_episode
+from evaluation.grading import grade_episode
 from server.chargeback_ops_environment import ChargebackOpsEnvironment
-from simulation import get_task
+from scenarios.simulation import get_task
 
 
 def test_grade_episode_bounds():

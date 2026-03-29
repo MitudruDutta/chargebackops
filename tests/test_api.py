@@ -1,5 +1,5 @@
-from inference import run_inference
-from models import ChargebackOpsAction
+from runners.inference import run_inference
+from core.models import ChargebackOpsAction
 from server.app import baseline, grader, root, tasks
 from server.chargeback_ops_environment import ChargebackOpsEnvironment
 
