@@ -42,7 +42,7 @@ A human dispute analyst handles 50-200 cases per day. They must triage by urgenc
 
 ## The Use Case
 
-ChargebackOps is built for the [OpenEnv](https://openenv.dev) evaluation framework. It is a **simulated merchant dispute resolution environment** where an AI agent acts as the dispute analyst.
+ChargebackOps is built for the [OpenEnv](https://meta-pytorch.org/OpenEnv/index.html) evaluation framework. It is a **simulated merchant dispute resolution environment** where an AI agent acts as the dispute analyst.
 
 **What the agent receives:**
 - A queue of 1-4 open dispute cases
