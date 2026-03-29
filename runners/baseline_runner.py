@@ -12,15 +12,15 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 try:
-    from .grading import grade_episode
-    from .models import BaselineRunResult, BaselineTaskResult, ChargebackOpsAction
-    from .server.chargeback_ops_environment import ChargebackOpsEnvironment
-    from .simulation import list_tasks
+    from ..evaluation.grading import grade_episode
+    from ..core.models import BaselineRunResult, BaselineTaskResult, ChargebackOpsAction
+    from ..server.chargeback_ops_environment import ChargebackOpsEnvironment
+    from ..scenarios.simulation import list_tasks
 except ImportError:  # pragma: no cover
-    from grading import grade_episode
-    from models import BaselineRunResult, BaselineTaskResult, ChargebackOpsAction
+    from evaluation.grading import grade_episode
+    from core.models import BaselineRunResult, BaselineTaskResult, ChargebackOpsAction
     from server.chargeback_ops_environment import ChargebackOpsEnvironment
-    from simulation import list_tasks
+    from scenarios.simulation import list_tasks
 
 try:  # pragma: no cover
     from dotenv import load_dotenv

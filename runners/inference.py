@@ -25,12 +25,12 @@ try:
         _strict_llm_mode,
         candidate_actions,
     )
-    from .grading import grade_episode
-    from .models import BaselineRunResult, BaselineTaskResult
-    from .server.chargeback_ops_environment import ChargebackOpsEnvironment
-    from .simulation import list_tasks
+    from ..evaluation.grading import grade_episode
+    from ..core.models import BaselineRunResult, BaselineTaskResult
+    from ..server.chargeback_ops_environment import ChargebackOpsEnvironment
+    from ..scenarios.simulation import list_tasks
 except ImportError:  # pragma: no cover
-    from baseline_runner import (
+    from runners.baseline_runner import (
         MAX_PROVIDER_RESPONSE_TOKENS,
         _chat_completion_with_retry,
         _heuristic_pick,
@@ -40,10 +40,10 @@ except ImportError:  # pragma: no cover
         _strict_llm_mode,
         candidate_actions,
     )
-    from grading import grade_episode
-    from models import BaselineRunResult, BaselineTaskResult
+    from evaluation.grading import grade_episode
+    from core.models import BaselineRunResult, BaselineTaskResult
     from server.chargeback_ops_environment import ChargebackOpsEnvironment
-    from simulation import list_tasks
+    from scenarios.simulation import list_tasks
 
 if load_dotenv is not None:  # pragma: no cover
     load_dotenv()

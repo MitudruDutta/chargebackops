@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 try:
-    from .models import CaseScoreBreakdown, GraderReport
-    from .simulation import CaseProgress, InternalCase, TaskScenario
+    from ..core.models import CaseScoreBreakdown, GraderReport
+    from ..scenarios.simulation import CaseProgress, InternalCase, TaskScenario
 except ImportError:  # pragma: no cover
-    from models import CaseScoreBreakdown, GraderReport
-    from simulation import CaseProgress, InternalCase, TaskScenario
+    from core.models import CaseScoreBreakdown, GraderReport
+    from scenarios.simulation import CaseProgress, InternalCase, TaskScenario
 
 
 def _ratio(numerator: int, denominator: int) -> float:

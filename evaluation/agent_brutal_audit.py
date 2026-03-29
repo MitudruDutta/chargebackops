@@ -21,11 +21,11 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-from baseline_runner import _heuristic_pick, _obvious_next_action, candidate_actions
-from grading import grade_episode
-from models import ChargebackOpsAction
+from runners.baseline_runner import _heuristic_pick, _obvious_next_action, candidate_actions
+from evaluation.grading import grade_episode
+from core.models import ChargebackOpsAction
 from server.chargeback_ops_environment import ChargebackOpsEnvironment
-from simulation import get_task
+from scenarios.simulation import get_task
 
 DATA_DIR = Path("data")
 
