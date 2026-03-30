@@ -37,6 +37,9 @@ build/
 # Local datasets (1.2GB+ — not for version control)
 data/
 
+# Episode logs (runtime artifacts)
+episode_logs/
+
 # Claude Code state
 .claude/
 

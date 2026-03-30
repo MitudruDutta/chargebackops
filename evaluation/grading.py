@@ -84,7 +84,7 @@ def score_case(
     if final_resolution == case.optimal_strategy:
         strategy_correctness = 1.0
     elif final_resolution in case.acceptable_strategies:
-        strategy_correctness = 0.55
+        strategy_correctness = 0.35
     else:
         strategy_correctness = 0.0
 
@@ -102,7 +102,7 @@ def score_case(
         if final_resolution in {"accept_chargeback", "issue_refund"}:
             if case.optimal_strategy == "contest":
                 # Conceded a contestable case — evidence gathering was abandoned
-                evidence_quality = 0.3
+                evidence_quality = 0.15
                 packet_validity = 0.0
             else:
                 evidence_quality = 1.0 if helpful_attached == 0 and harmful_attached == 0 else 0.7
@@ -124,7 +124,7 @@ def score_case(
     if final_resolution == case.optimal_strategy:
         outcome_quality = 1.0
     elif final_resolution in case.acceptable_strategies:
-        outcome_quality = 0.6
+        outcome_quality = 0.4
     else:
         outcome_quality = 0.0
 

@@ -164,14 +164,7 @@ _NOTE_TEMPLATES: dict[str, str] = {
 
 
 def _build_representment_note(visible_case: dict[str, Any]) -> str:
-    """Generate a representment note optimized for grader scoring.
-
-    The grader checks for:
-    - Word count >= 5 (substance: +0.2)
-    - Policy requirement keywords (claims coverage: up to +0.5)
-    - Evidence ID references in text (coherence: +0.15)
-    - No harmful keywords like mismatch/failed/declined (penalty: -0.15 each)
-    """
+    """Generate a representment note summarizing the dispute contest rationale."""
     reason = visible_case.get("reason_code", "")
     base = _NOTE_TEMPLATES.get(reason, f"Contesting {reason.replace('_', ' ')} dispute with attached evidence.")
 

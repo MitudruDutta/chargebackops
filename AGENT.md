@@ -549,19 +549,20 @@ Representment notes are generated with direct references to policy requirement k
 
 | File | Purpose | Lines |
 |---|---|---|
-| `baseline_runner.py` | The agent: decision pipeline, candidate generation, LLM integration, representment notes | ~1100 |
+| `runners/baseline_runner.py` | The agent: decision pipeline, candidate generation, LLM integration, representment notes | ~1100 |
 | `server/chargeback_ops_environment.py` | The environment: step/reset/state, action execution, reward computation | ~500 |
-| `grading.py` | Deterministic 7-dimension scoring, representment note grading | ~200 |
-| `simulation.py` | Task definitions, case progress tracking, evidence metadata | ~600 |
-| `models.py` | Pydantic models for actions, observations, state, grading | ~600 |
-| `inference.py` | OpenEnv-compatible inference entry point with provider fallback | ~200 |
-| `case_generator.py` | Parametric task generator with seeded RNG | ~700 |
-| `iso_adapter.py` | Converts ISO 20022 CASR.003 records to environment cases | ~160 |
+| `evaluation/grading.py` | Deterministic 7-dimension scoring, representment note grading | ~200 |
+| `scenarios/simulation.py` | Task definitions, case progress tracking, evidence metadata | ~600 |
+| `core/models.py` | Pydantic models for actions, observations, state, grading | ~600 |
+| `runners/inference.py` | OpenEnv-compatible inference entry point with provider fallback | ~200 |
+| `inference.py` | Root re-export for submission contract | ~10 |
+| `scenarios/case_generator.py` | Parametric task generator with seeded RNG | ~700 |
+| `scenarios/iso_adapter.py` | Converts ISO 20022 CASR.003 records to environment cases | ~160 |
 | `connectors/stripe_sandbox.py` | Maps Stripe test-mode disputes to environment cases | ~280 |
-| `agent_brutal_audit.py` | 126-episode evaluation across all data sources | ~300 |
-| `server/app.py` | FastAPI routes: /reset, /step, /state, /tasks, /baseline, /grader | ~200 |
-| `episode_store.py` | Thread-safe storage for grader reports | ~50 |
-| `client.py` | OpenEnv WebSocket client | ~100 |
+| `evaluation/agent_brutal_audit.py` | 126-episode evaluation across all data sources | ~300 |
+| `server/app.py` | FastAPI routes: /reset, /step, /state, /tasks, /baseline, /grader, /results | ~200 |
+| `core/episode_store.py` | Thread-safe storage with JSONL file persistence | ~60 |
+| `core/client.py` | OpenEnv WebSocket client | ~100 |
 
 ---
 

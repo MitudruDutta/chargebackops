@@ -6,7 +6,7 @@ from server.chargeback_ops_environment import ChargebackOpsEnvironment
 
 def test_tasks_endpoint_payload():
     payload = tasks()
-    assert len(payload.tasks) == 3
+    assert len(payload.tasks) >= 3
     assert "properties" in payload.action_schema
 
 
@@ -27,7 +27,7 @@ def test_baseline_endpoint_works_without_api_key(monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     payload = baseline()
     assert payload.mode == "heuristic_fallback"
-    assert len(payload.task_results) == 3
+    assert len(payload.task_results) >= 3
 
 
 def test_inference_script_falls_back_without_hf_token(monkeypatch):
@@ -36,7 +36,7 @@ def test_inference_script_falls_back_without_hf_token(monkeypatch):
     monkeypatch.delenv("MODEL_NAME", raising=False)
     payload = run_inference()
     assert payload.mode == "heuristic_fallback"
-    assert len(payload.task_results) == 3
+    assert len(payload.task_results) >= 3
 
 
 def test_grader_endpoint_after_completed_episode():

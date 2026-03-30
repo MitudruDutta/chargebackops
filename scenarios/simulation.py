@@ -624,11 +624,23 @@ def get_task(task_id: str) -> TaskScenario:
 
 
 def list_tasks() -> list[TaskScenario]:
-    """Return built-in tasks in a stable order."""
+    """Return built-in and generated tasks in a stable order."""
 
-    ordered_ids = [
+    try:
+        from .case_generator import generate_task
+    except ImportError:  # pragma: no cover
+        from case_generator import generate_task
+
+    built_in = [TASKS[task_id] for task_id in [
         "goods_not_received_easy",
         "fraud_signal_ambiguity",
         "queue_optimization_hard",
+    ]]
+    generated = [
+        generate_task(seed=42, difficulty="easy"),
+        generate_task(seed=17, difficulty="medium"),
+        generate_task(seed=99, difficulty="medium"),
+        generate_task(seed=7, difficulty="hard"),
+        generate_task(seed=53, difficulty="hard"),
     ]
-    return [TASKS[task_id] for task_id in ordered_ids]
+    return built_in + generated

@@ -14,7 +14,7 @@ except Exception as exc:  # pragma: no cover
 
 try:
     from ..runners.baseline_runner import run_baseline
-    from ..core.episode_store import get_report
+    from ..core.episode_store import get_report, list_reports
     from ..runners.inference import run_inference
     from ..core.models import (
         BaselineRunResult,
@@ -27,7 +27,7 @@ try:
     from .chargeback_ops_environment import ChargebackOpsEnvironment
 except ImportError:  # pragma: no cover
     from runners.baseline_runner import run_baseline
-    from core.episode_store import get_report
+    from core.episode_store import get_report, list_reports
     from runners.inference import run_inference
     from core.models import (
         BaselineRunResult,
@@ -140,6 +140,14 @@ def baseline(
     if provider is None and model_name is None:
         return run_inference()
     return run_baseline(provider=provider, model_name=model_name)
+
+
+@app.get("/results")
+def results():
+    """Return all completed episode reports for inspection and replay."""
+
+    reports = list_reports()
+    return [report.model_dump() for report in reports]
 
 
 def main(host: str = "0.0.0.0", port: int = 8000) -> None:

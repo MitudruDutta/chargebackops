@@ -315,14 +315,14 @@ cp .env.example .env
 ```bash
 pytest -q tests
 openenv validate .
-python baseline_runner.py
-python agent_brutal_audit.py
+python -m runners.baseline_runner
+python -m evaluation.agent_brutal_audit
 ```
 
 ### Run Server
 
 ```bash
-uvicorn server.app:app --host 0.0.0.0 --port 8000
+uvicorn chargeback_ops.server.app:app --host 0.0.0.0 --port 8000
 ```
 
 ### Docker
@@ -346,6 +346,7 @@ docker run --rm -p 8000:8000 --env-file .env chargebackops
 | `GET` | `/generate` | Generate parametric tasks |
 | `GET/POST` | `/grader` | Fetch latest episode grade |
 | `GET/POST` | `/baseline` | Run the heuristic baseline |
+| `GET` | `/results` | List all completed episode reports |
 
 ## Inference Contract
 
@@ -370,22 +371,27 @@ Supported providers: OpenRouter, OpenAI, Google Gemini, Groq, Anthropic-compatib
 
 ```
 .
+├── inference.py                 # Root entry point (submission contract)
 ├── openenv.yaml                 # OpenEnv spec
-├── models.py                    # Pydantic action/observation/state models
-├── simulation.py                # Task definitions and case progress
-├── grading.py                   # Deterministic 7-dimension grader
-├── baseline_runner.py           # Heuristic agent with LLM fallback
-├── inference.py                 # Challenge-compatible inference entry
-├── case_generator.py            # Parametric seeded task generator
-├── iso_adapter.py               # ISO 20022 real data adapter
-├── agent_brutal_audit.py        # Comprehensive agent evaluation
-├── client.py                    # OpenEnv WebSocket client
-├── episode_store.py             # Thread-safe episode report store
-├── connectors/
-│   └── stripe_sandbox.py        # Stripe test-mode connector
+├── core/
+│   ├── models.py                # Pydantic action/observation/state models
+│   ├── client.py                # OpenEnv WebSocket client
+│   └── episode_store.py         # Thread-safe episode report store
+├── evaluation/
+│   ├── grading.py               # Deterministic 7-dimension grader
+│   └── agent_brutal_audit.py    # Comprehensive agent evaluation
+├── runners/
+│   ├── baseline_runner.py       # Heuristic agent with LLM fallback
+│   └── inference.py             # Challenge-compatible inference logic
+├── scenarios/
+│   ├── simulation.py            # Task definitions and case progress
+│   ├── case_generator.py        # Parametric seeded task generator
+│   └── iso_adapter.py           # ISO 20022 real data adapter
 ├── server/
 │   ├── app.py                   # FastAPI application
 │   └── chargeback_ops_environment.py  # Core environment
+├── connectors/
+│   └── stripe_sandbox.py        # Stripe test-mode connector
 ├── tests/
 │   ├── test_env.py              # Environment + generator tests
 │   ├── test_grader.py           # Grading logic tests
