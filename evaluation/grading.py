@@ -59,11 +59,22 @@ def grade_representment_note(
     if evidence_refs > 0:
         score += 0.15
 
-    # Harmful mention penalty: does the note mention harmful evidence concepts?
-    harmful_keywords = {"mismatch", "failed", "declined", "suspicious", "flagged", "fraud risk"}
-    harmful_hits = sum(1 for kw in harmful_keywords if kw in text)
+    # Harmful mention penalty: derived from the case's actual harmful evidence.
+    # Each case defines its own harmful artifacts, so the penalty adapts to
+    # the specific dispute rather than matching a static keyword list.
+    harmful_terms: set[str] = set()
+    for items in case.evidence_by_system.values():
+        for item in items:
+            if item.harmful:
+                for word in (item.title + " " + item.summary).lower().split():
+                    clean = word.strip(".,;:()")
+                    if len(clean) > 3:
+                        harmful_terms.add(clean)
+    # Remove generic words that would cause false positives
+    harmful_terms -= {"was", "the", "and", "for", "that", "with", "from", "time", "detail"}
+    harmful_hits = sum(1 for term in harmful_terms if term in text)
     if harmful_hits > 0:
-        score -= 0.15 * min(harmful_hits, 2)
+        score -= 0.12 * min(harmful_hits, 3)
 
     return max(0.0, min(1.0, score))
 
