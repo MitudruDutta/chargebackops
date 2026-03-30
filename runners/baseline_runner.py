@@ -199,17 +199,22 @@ def _visible_case_deadline(queue: list[dict[str, Any]], case_id: str) -> int:
     return 999
 
 
-_HARMFUL_KEYWORDS = {"mismatch", "failed", "declined", "suspicious", "flagged", "fraud risk"}
+_NEGATIVE_SIGNAL_KEYWORDS = {
+    "mismatch", "failed", "declined", "suspicious", "flagged", "fraud risk",
+    "unauthorized", "rejected", "invalid", "expired", "violation",
+    "non-compliant", "discrepancy", "inconsistent", "unverified",
+}
 
 
 def _is_harmful_evidence(item: dict[str, Any]) -> bool:
+    """Conservative heuristic: flag evidence with negative-signal language."""
     text = (item.get("title", "") + " " + item.get("summary", "")).lower()
-    return any(kw in text for kw in _HARMFUL_KEYWORDS)
+    return any(kw in text for kw in _NEGATIVE_SIGNAL_KEYWORDS)
 
 
 def _rank_attachable(item: dict[str, Any]) -> int:
     text = (item["title"] + " " + item["summary"]).lower()
-    if any(kw in text for kw in _HARMFUL_KEYWORDS):
+    if any(kw in text for kw in _NEGATIVE_SIGNAL_KEYWORDS):
         return 999
     if "signature" in text:
         return 0

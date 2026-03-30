@@ -35,26 +35,26 @@ That makes ChargebackOps a good benchmark for tool-using agents. It measures ret
 ```mermaid
 graph TB
     subgraph Agent["Agent Layer"]
-        INF["inference.py\nOpenAI-compatible client\nProvider fallback chain"]
-        BL["baseline_runner.py\nThree-tier decision pipeline\nHeuristic + LLM hybrid"]
+        INF["runners/inference.py\nOpenAI-compatible client\nProvider fallback chain"]
+        BL["runners/baseline_runner.py\nThree-tier decision pipeline\nHeuristic + LLM hybrid"]
     end
 
     subgraph API["API Layer"]
         APP["FastAPI server\nserver/app.py"]
-        WS["OpenEnv WebSocket\nclient.py"]
+        WS["OpenEnv WebSocket\ncore/client.py"]
     end
 
     subgraph Core["Environment Core"]
         ENV["ChargebackOpsEnvironment\nstep() / reset() / state()"]
-        SIM["Simulation Engine\nsimulation.py"]
-        GRD["Deterministic Grader\n7-dimension scoring"]
-        STORE["Episode Store\nepisode_store.py"]
+        SIM["Simulation Engine\nscenarios/simulation.py"]
+        GRD["Deterministic Grader\nevaluation/grading.py"]
+        STORE["Episode Store\ncore/episode_store.py"]
     end
 
     subgraph Tasks["Task Sources"]
         FIXED["Built-in Tasks\n3 handcrafted scenarios"]
-        GEN["Parametric Generator\ncase_generator.py\nSeeded RNG, infinite tasks"]
-        ISO["ISO 20022 Adapter\niso_adapter.py\n300 real chargeback records"]
+        GEN["Parametric Generator\nscenarios/case_generator.py\nSeeded RNG, infinite tasks"]
+        ISO["ISO 20022 Adapter\nscenarios/iso_adapter.py\n300 real chargeback records"]
         STRIPE["Stripe Connector\nconnectors/stripe_sandbox.py\nLive API or synthetic disputes"]
     end
 
@@ -179,7 +179,7 @@ flowchart TD
     SKIP --> QUERY["Query merchant systems\n(deadline-aware: fewer queries\nwhen deadline is tight)"]
     CONT --> QUERY
 
-    QUERY --> ATTACH["Attach all non-harmful evidence\n(filter by 6 harmful keywords:\nmismatch, failed, declined,\nsuspicious, flagged, fraud risk)"]
+    QUERY --> ATTACH["Attach all non-harmful evidence\n(filter by 15 negative-signal keywords:\nmismatch, failed, declined, suspicious,\nflagged, unauthorized, rejected, etc.)"]
     ATTACH --> HARMFUL{"Any harmful\nevidence attached?"}
     HARMFUL -->|"Yes"| REMOVE["remove_evidence\n(clean before submit)"]
     HARMFUL -->|"No"| STRAT["Set strategy"]
@@ -221,13 +221,13 @@ pie title Case Score Weights
 
 | Dimension | How It's Scored |
 |---|---|
-| **Strategy Correctness** | 1.0 = optimal strategy, 0.55 = acceptable fallback, 0.0 = wrong |
+| **Strategy Correctness** | 1.0 = optimal strategy, 0.35 = acceptable fallback, 0.0 = wrong |
 | **Evidence Quality** | Contest: 0.7 × (required attached / total required) + 0.3 × (helpful / total helpful) − 0.25 per harmful. Non-contest: 1.0 if clean, 0.7 otherwise |
 | **Packet Validity** | Binary: 1.0 if all required evidence attached AND zero harmful, else 0.0 |
 | **Deadline Compliance** | Binary: 1.0 if resolved before deadline step, else 0.0 |
 | **Efficiency** | 1.0 − (duplicate_queries × 0.1 + submit_attempts × 0.05), min 0.1 |
-| **Outcome Quality** | 1.0 = optimal resolution, 0.6 = acceptable, 0.0 = wrong |
-| **Note Quality** | Contest only: word substance (20%) + policy keyword coverage (50%) + evidence ID refs (15%) − harmful keyword penalty (15%) |
+| **Outcome Quality** | 1.0 = optimal resolution, 0.4 = acceptable, 0.0 = wrong |
+| **Note Quality** | Contest only: word substance (20%) + policy keyword coverage (50%) + evidence ID refs (15%) − contextual harmful-term penalty (up to 36%) |
 
 Each case is weighted by financial impact. Episode score normalizes across all cases to `[0.0, 1.0]`.
 
@@ -256,6 +256,24 @@ Results from the heuristic agent across built-in and parametric tasks:
 | Parametric hard (20) | 0.722 | 0/20 | 0/20 | 0.559 |
 
 **Overall: 0.861 avg | 54.0% score >= 0.90 | 0.0% score < 0.50**
+
+### Heuristic vs Naive Agent Comparison
+
+The grading system reliably distinguishes competent behavior from naive strategies:
+
+| Task | Heuristic Score | Naive Score | Gap |
+|---|---|---|---|
+| `goods_not_received_easy` | 0.9225 | 0.3500 | +0.5725 |
+| `fraud_signal_ambiguity` | 0.7355 | 0.1750 | +0.5605 |
+| `queue_optimization_hard` | 0.7475 | 0.2000 | +0.5475 |
+| `generated_easy_s42` | 0.9725 | 0.2500 | +0.7225 |
+| `generated_medium_s17` | 0.9125 | 0.1750 | +0.7375 |
+| `generated_medium_s99` | 0.8500 | 0.1750 | +0.6750 |
+| `generated_hard_s7` | 0.7600 | 0.2250 | +0.5350 |
+| `generated_hard_s53` | 0.8275 | 0.3550 | +0.4725 |
+| **Average** | **0.8410** | **0.2381** | **+0.6029** |
+
+The +0.60 gap across all difficulties confirms the environment produces meaningful signal for agent evaluation.
 
 ## Task Sources
 
