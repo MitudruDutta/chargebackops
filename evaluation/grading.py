@@ -129,8 +129,35 @@ def score_case(
     elif resolution_step > case.deadline_step:
         deadline_compliance = 0.0
 
+    # --- Efficiency: penalise shallow operational behaviour ---
     wasted_actions = progress.duplicate_queries + progress.invalid_actions
     efficiency = max(0.0, 1.0 - min(0.9, wasted_actions * 0.1 + progress.submit_attempts * 0.05))
+
+    # Penalty: over-querying a concedable case wastes steps
+    if final_resolution in {"accept_chargeback", "issue_refund"} and case.optimal_strategy != "contest":
+        systems_queried = len(progress.revealed_systems)
+        if systems_queried > 2:
+            efficiency -= 0.15 * (systems_queried - 2)
+
+    # Penalty: retrieving policy too late to change the outcome
+    if progress.policy_retrieved and resolution_step is not None:
+        # The case was already being resolved, policy retrieval was wasted
+        if final_resolution in {"accept_chargeback", "issue_refund"} and case.optimal_strategy in {
+            "accept_chargeback", "issue_refund"
+        }:
+            # Correct concession but wasted a step on policy retrieval
+            efficiency -= 0.08
+
+    # Reward: early correct concession on a clearly bad case (≤3 steps used)
+    if (
+        final_resolution in {"accept_chargeback", "issue_refund"}
+        and case.optimal_strategy in {"accept_chargeback", "issue_refund"}
+        and resolution_step is not None
+        and resolution_step <= 3
+    ):
+        efficiency = min(1.0, efficiency + 0.1)
+
+    efficiency = max(0.0, min(1.0, efficiency))
 
     if final_resolution == case.optimal_strategy:
         outcome_quality = 1.0
