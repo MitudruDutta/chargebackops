@@ -54,7 +54,7 @@ class TaskScenario:
 
     task_id: str
     title: str
-    difficulty: Literal["easy", "medium", "hard"]
+    difficulty: Literal["easy", "medium", "hard", "nightmare"]
     objective: str
     description: str
     max_steps: int
@@ -592,7 +592,7 @@ def get_task(task_id: str) -> TaskScenario:
     # Support generated task ids: generated_{difficulty}_s{seed}
     import re
 
-    m = re.match(r"^generated_(easy|medium|hard)_s(\d+)$", task_id)
+    m = re.match(r"^generated_(easy|medium|hard|nightmare)_s(\d+)$", task_id)
     if m:
         try:
             from .case_generator import generate_task
@@ -624,23 +624,45 @@ def get_task(task_id: str) -> TaskScenario:
 
 
 def list_tasks() -> list[TaskScenario]:
-    """Return built-in and generated tasks in a stable order."""
+    """Return all benchmark tasks organised into three splits.
+
+    - **Showcase** (3): hand-crafted built-in tasks for demos and README.
+    - **Generated holdout** (7): seeded tasks never used for agent tuning.
+    - **ISO replay** (up to 3): real chargeback data tasks when CSV is present.
+    """
 
     try:
         from .case_generator import generate_task
     except ImportError:  # pragma: no cover
         from case_generator import generate_task
 
-    built_in = [TASKS[task_id] for task_id in [
+    # --- Showcase split (fixed, hand-crafted) ---
+    showcase = [TASKS[task_id] for task_id in [
         "goods_not_received_easy",
         "fraud_signal_ambiguity",
         "queue_optimization_hard",
     ]]
-    generated = [
+
+    # --- Generated holdout split (seeded, never used for tuning) ---
+    holdout = [
         generate_task(seed=42, difficulty="easy"),
         generate_task(seed=17, difficulty="medium"),
         generate_task(seed=99, difficulty="medium"),
         generate_task(seed=7, difficulty="hard"),
         generate_task(seed=53, difficulty="hard"),
+        generate_task(seed=31, difficulty="nightmare"),
+        generate_task(seed=77, difficulty="nightmare"),
     ]
-    return built_in + generated
+
+    # --- ISO replay split (real data, when available) ---
+    replay: list[TaskScenario] = []
+    try:
+        try:
+            from .iso_adapter import generate_iso_suite
+        except ImportError:  # pragma: no cover
+            from iso_adapter import generate_iso_suite
+        replay = generate_iso_suite(easy_count=1, medium_count=1, hard_count=1)
+    except Exception:
+        pass
+
+    return showcase + holdout + replay

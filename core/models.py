@@ -26,6 +26,12 @@ class CaseQueueItem(BaseModel):
     """Queue-level summary of a chargeback case."""
 
     case_id: str
+    transaction_id: str
+    transaction_timestamp: str
+    dispute_opened_at: str
+    merchant_name: str
+    merchant_mcc: str
+    masked_card: str
     amount: float
     currency: str
     reason_code: str
@@ -57,8 +63,14 @@ class VisibleCase(BaseModel):
     """Current workspace for the selected case."""
 
     case_id: str
+    transaction_id: str
+    transaction_timestamp: str
+    dispute_opened_at: str
     order_id: str
     customer_id: str
+    merchant_name: str
+    merchant_mcc: str
+    masked_card: str
     amount: float
     currency: str
     reason_code: str
@@ -78,7 +90,7 @@ class TaskSummary(BaseModel):
 
     task_id: str
     title: str
-    difficulty: Literal["easy", "medium", "hard"]
+    difficulty: Literal["easy", "medium", "hard", "nightmare"]
     objective: str
     description: str
     max_steps: int
@@ -193,7 +205,7 @@ class ChargebackOpsObservation(Observation):
 
     task_id: str
     task_title: str
-    difficulty: Literal["easy", "medium", "hard"]
+    difficulty: Literal["easy", "medium", "hard", "nightmare"]
     objective: str
     selected_case_id: str | None = None
     queue: list[CaseQueueItem] = Field(default_factory=list)
@@ -202,6 +214,7 @@ class ChargebackOpsObservation(Observation):
     available_actions: list[str] = Field(default_factory=list)
     steps_remaining: int
     progress_score: float = 0.0
+    info: dict[str, Any] = Field(default_factory=dict)
     grader_report: GraderReport | None = None
 
 
@@ -210,11 +223,12 @@ class ChargebackOpsState(State):
 
     task_id: str
     task_title: str
-    difficulty: Literal["easy", "medium", "hard"]
+    difficulty: Literal["easy", "medium", "hard", "nightmare"]
     objective: str
     selected_case_id: str | None = None
     queue_state: list[CaseResolutionState] = Field(default_factory=list)
     action_history: list[ActionTraceItem] = Field(default_factory=list)
+    metrics: dict[str, float] = Field(default_factory=dict)
     latest_grade: float | None = None
     grader_report: GraderReport | None = None
     completed: bool = False

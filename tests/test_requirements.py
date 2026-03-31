@@ -62,7 +62,7 @@ def _run_bad_episode(task_id: str) -> tuple[float, float]:
 def test_problem_statement_task_catalog():
     tasks = list_tasks()
     assert len(tasks) >= 3
-    assert {task.difficulty for task in tasks} == {"easy", "medium", "hard"}
+    assert {task.difficulty for task in tasks} >= {"easy", "medium", "hard"}
 
 
 def test_problem_statement_reset_and_state_cleanliness():

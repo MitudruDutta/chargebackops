@@ -511,6 +511,179 @@ _PRODUCT_NOT_AS_DESCRIBED = _CaseTemplate(
 )
 
 
+# ---------------------------------------------------------------------------
+# Adversarial evidence templates — title sounds helpful, content is harmful
+# ---------------------------------------------------------------------------
+
+_GOODS_NOT_RECEIVED_ADVERSARIAL = _CaseTemplate(
+    reason_code="goods_not_received",
+    summaries=(
+        "Customer disputes delivery of a high-value item. Carrier shows delivered but GPS data is ambiguous.",
+        "Cardholder claims non-receipt. Delivery photo exists but address partially obscured.",
+    ),
+    inspection_notes=(
+        "Delivery evidence exists but has quality issues. Careful evidence curation is required.",
+        "Carrier proof is present but some artifacts may weaken the case. Review evidence before attaching.",
+    ),
+    policy_guidance=(
+        "For goods-not-received disputes, prove the merchandise was fulfilled "
+        "to the billed customer with order confirmation and carrier delivery evidence. "
+        "Do not include evidence that shows delivery anomalies."
+    ),
+    policy_requirements=("order confirmation", "carrier delivery confirmation"),
+    optimal_strategy="contest",
+    acceptable_strategies=(),
+    resolution_summary="Contest with clean delivery proof only. Exclude anomalous delivery artifacts.",
+    base_weight=1.3,
+    evidence_blueprints=(
+        _EvidenceBlueprint(
+            "ORDER-CONF", "orders", "Order confirmation",
+            (
+                "Order receipt with billing name, address, and itemized products.",
+                "Original order confirmation email showing the billed customer.",
+            ),
+            helpful=True, required=True,
+        ),
+        _EvidenceBlueprint(
+            "DELIVERY", "shipping", "Carrier delivery scan",
+            (
+                "Carrier tracking confirms delivery to the registered shipping address.",
+                "Delivery scan shows package arrived at the customer address.",
+            ),
+            helpful=True, required=True,
+        ),
+        # ADVERSARIAL: title sounds helpful, content is harmful
+        _EvidenceBlueprint(
+            "DELIVERY-DETAIL", "shipping", "Delivery verification report",
+            (
+                "GPS coordinates at delivery time show a 200m discrepancy from the registered address. "
+                "Driver noted the recipient was not present and package was left unattended.",
+                "Delivery verification flagged a geolocation mismatch between the scanned delivery point "
+                "and the customer's registered address.",
+            ),
+            harmful=True, probability=0.9,
+        ),
+        _EvidenceBlueprint(
+            "SIGNATURE", "shipping", "Delivery signature",
+            ("Recipient signature recorded at delivery.",),
+            helpful=True, probability=0.4,
+        ),
+        # ADVERSARIAL: title sounds helpful, content is harmful
+        _EvidenceBlueprint(
+            "CARRIER-NOTES", "shipping", "Carrier compliance summary",
+            (
+                "Carrier flagged this delivery as a high-risk address with multiple prior non-receipt claims. "
+                "Delivery was attempted twice before successful scan.",
+                "Carrier notes indicate the address has been suspended from guaranteed delivery due to "
+                "repeated delivery disputes.",
+            ),
+            harmful=True, probability=0.7,
+        ),
+        _EvidenceBlueprint(
+            "SUPPORT", "support", "Support interaction",
+            ("Customer contacted support about delivery status.",),
+            helpful=True, probability=0.5,
+        ),
+        _EvidenceBlueprint(
+            "NO-REFUND", "refunds", "Refund ledger",
+            ("No refund issued before the dispute.",),
+        ),
+        _EvidenceBlueprint(
+            "RISK", "risk", "Risk summary",
+            ("Standard transaction risk profile.",),
+        ),
+    ),
+)
+
+
+_FRAUD_CNP_ADVERSARIAL = _CaseTemplate(
+    reason_code="fraud_cnp",
+    summaries=(
+        "CNP fraud dispute on a mid-value electronics purchase. Account shows prior activity but verification signals are mixed.",
+        "Issuer disputes an online order as unauthorized. The account has history but recent changes raise questions.",
+    ),
+    inspection_notes=(
+        "Account has prior orders but recent address change and new device. Evidence must be curated carefully.",
+        "Some account linkage exists but verification artifacts contain damaging details. Read summaries before attaching.",
+    ),
+    policy_guidance=(
+        "For CNP fraud disputes, contest only when you can link the cardholder "
+        "to the account or device history. Do not attach evidence that strengthens "
+        "the issuer's fraud narrative."
+    ),
+    policy_requirements=("prior good order linkage", "customer account confirmation"),
+    optimal_strategy="contest",
+    acceptable_strategies=("accept_chargeback",),
+    resolution_summary="Contest with clean account-linkage evidence. Exclude verification failure details.",
+    base_weight=1.2,
+    evidence_blueprints=(
+        _EvidenceBlueprint(
+            "ORDER", "orders", "Order receipt",
+            (
+                "Checkout receipt linked to an established customer account.",
+                "Order confirmation with customer account ID and shipping address.",
+            ),
+            helpful=True,
+        ),
+        _EvidenceBlueprint(
+            "PRIOR-ORDERS", "risk", "Prior account activity",
+            (
+                "Same account with three prior fulfilled orders over 6 months.",
+                "Established account with consistent purchase history.",
+            ),
+            helpful=True, required=True,
+        ),
+        _EvidenceBlueprint(
+            "ACCOUNT-CHAT", "support", "Authenticated support chat",
+            (
+                "Customer logged in and confirmed the order in a support chat.",
+                "Authenticated session where customer discussed this purchase.",
+            ),
+            helpful=True, required=True,
+        ),
+        # ADVERSARIAL: title sounds like it helps, content destroys the case
+        _EvidenceBlueprint(
+            "ACCOUNT-REVIEW", "risk", "Account verification summary",
+            (
+                "Account review shows the shipping address was changed 2 hours before this order. "
+                "New device fingerprint does not match any prior sessions. "
+                "Velocity check flagged 3 orders within 40 minutes from the new device.",
+                "Account security audit reveals the email was accessed from an unrecognized IP "
+                "and the password was reset 4 hours before this purchase. "
+                "Device fingerprint is inconsistent with prior login history.",
+            ),
+            harmful=True, probability=0.85,
+        ),
+        # ADVERSARIAL: another trap
+        _EvidenceBlueprint(
+            "TRANSACTION-VERIFY", "payment", "Transaction authentication report",
+            (
+                "3D Secure challenge was presented but failed on the first attempt. "
+                "Authorization proceeded on a liability-shift exemption. "
+                "AVS returned a partial mismatch.",
+                "Transaction authentication record shows the cardholder failed the "
+                "initial verification challenge. Authorization was force-approved by the merchant.",
+            ),
+            harmful=True, probability=0.8,
+        ),
+        _EvidenceBlueprint(
+            "AVS-MISMATCH", "payment", "AVS mismatch detail",
+            ("Street-number mismatch recorded at authorization time.",),
+            harmful=True, probability=0.6,
+        ),
+        _EvidenceBlueprint(
+            "DELIVERY", "shipping", "Carrier delivery confirmation",
+            ("Package delivered to the account's shipping address.",),
+            helpful=True,
+        ),
+        _EvidenceBlueprint(
+            "NO-REFUND", "refunds", "Refund ledger",
+            ("No refund issued before the dispute.",),
+        ),
+    ),
+)
+
+
 _SERVICE_NOT_PROVIDED = _CaseTemplate(
     reason_code="service_not_provided",
     summaries=(
@@ -584,6 +757,11 @@ _CONTESTABLE_TEMPLATES: tuple[_CaseTemplate, ...] = (
     _FRAUD_CNP_STRONG,
     _PRODUCT_NOT_AS_DESCRIBED,
     _SERVICE_NOT_PROVIDED,
+)
+
+_ADVERSARIAL_TEMPLATES: tuple[_CaseTemplate, ...] = (
+    _GOODS_NOT_RECEIVED_ADVERSARIAL,
+    _FRAUD_CNP_ADVERSARIAL,
 )
 
 _CONCEDABLE_TEMPLATES: tuple[_CaseTemplate, ...] = (
@@ -712,7 +890,7 @@ def generate_case(
 def generate_task(
     seed: int,
     *,
-    difficulty: Literal["easy", "medium", "hard"] = "medium",
+    difficulty: Literal["easy", "medium", "hard", "nightmare"] = "medium",
     case_count: int | None = None,
 ) -> TaskScenario:
     """Generate a full task scenario from a seed.
@@ -723,17 +901,29 @@ def generate_task(
         Deterministic seed — same seed always produces the same task.
     difficulty:
         Controls step budget, deadline pressure, and case count defaults.
+        ``nightmare`` adds adversarial evidence and extreme budget pressure.
     case_count:
-        Override the number of cases (default: 1 for easy, 1-2 for medium, 2-4 for hard).
+        Override the number of cases (default: 1 for easy, 1-2 for medium,
+        2-4 for hard, 5-6 for nightmare).
     """
 
     rng = random.Random(seed)
 
     # Defaults per difficulty
     if case_count is None:
-        case_count = {"easy": 1, "medium": rng.choice([1, 2]), "hard": rng.choice([2, 3, 4])}[difficulty]
+        case_count = {
+            "easy": 1,
+            "medium": rng.choice([1, 2]),
+            "hard": rng.choice([2, 3, 4]),
+            "nightmare": rng.choice([5, 6]),
+        }[difficulty]
 
-    max_steps = {"easy": 10, "medium": 12, "hard": max(12, case_count * 5)}[difficulty]
+    max_steps = {
+        "easy": 10,
+        "medium": 12,
+        "hard": max(12, case_count * 5),
+        "nightmare": max(12, case_count * 3),  # ~2.4 steps per case
+    }[difficulty]
 
     # Build the case list
     cases: list[InternalCase] = []
@@ -743,14 +933,29 @@ def generate_task(
         if difficulty == "easy":
             # Easy: always a clean contestable case
             template = rng.choice(_CONTESTABLE_TEMPLATES)
-        elif difficulty == "hard" and case_count > 1:
-            # Hard: mix of contestable and concedable — ensure at least one of each
+        elif difficulty == "nightmare":
+            # Nightmare: adversarial evidence, mixed strategies, high pressure
             if i == 0:
-                template = rng.choice(_CONTESTABLE_TEMPLATES)
+                template = rng.choice(_ADVERSARIAL_TEMPLATES)
+            elif i == 1:
+                template = rng.choice(_CONCEDABLE_TEMPLATES)
+            elif i == 2:
+                template = rng.choice(_ADVERSARIAL_TEMPLATES)
+            else:
+                template = rng.choice(_ALL_TEMPLATES + _ADVERSARIAL_TEMPLATES)
+        elif difficulty == "hard" and case_count > 1:
+            # Hard: mix of contestable, concedable, and adversarial
+            if i == 0:
+                # First case: adversarial contestable (trap evidence)
+                template = rng.choice(
+                    _ADVERSARIAL_TEMPLATES + _CONTESTABLE_TEMPLATES
+                )
             elif i == 1:
                 template = rng.choice(_CONCEDABLE_TEMPLATES)
             else:
-                template = rng.choice(_ALL_TEMPLATES)
+                template = rng.choice(
+                    _ALL_TEMPLATES + _ADVERSARIAL_TEMPLATES
+                )
         else:
             # Medium: any template
             template = rng.choice(_ALL_TEMPLATES)
@@ -758,7 +963,12 @@ def generate_task(
         used_templates.append(template)
 
         # Deadline tightens with difficulty
-        base_deadline = {"easy": 8, "medium": 7, "hard": max(4, 8 - i)}[difficulty]
+        base_deadline = {
+            "easy": 8,
+            "medium": 7,
+            "hard": max(4, 8 - i),
+            "nightmare": max(3, 6 - i),
+        }[difficulty]
         deadline = base_deadline + rng.randint(-1, 1)
         deadline = max(3, min(deadline, max_steps - 1))
 
@@ -788,6 +998,12 @@ def generate_task(
             "Deadline Pressure Queue",
             "Complex Dispute Portfolio",
         ],
+        "nightmare": [
+            "Adversarial Portfolio Stress Test",
+            "Trap Evidence Gauntlet",
+            "Maximum Pressure Dispute Queue",
+            "Misleading Signal Overload",
+        ],
     }
     title = rng.choice(title_pool[difficulty])
 
@@ -797,6 +1013,11 @@ def generate_task(
         "hard": (
             f"Optimize outcomes across {case_count} disputes ({code_list}) under tight deadlines. "
             "Prioritize high-value recoverable cases and concede weak ones efficiently."
+        ),
+        "nightmare": (
+            f"Survive {case_count} disputes ({code_list}) with adversarial evidence, "
+            "conflicting deadlines, and extreme step pressure. Evidence titles may be misleading — "
+            "read summaries carefully. Triage ruthlessly."
         ),
     }
 
