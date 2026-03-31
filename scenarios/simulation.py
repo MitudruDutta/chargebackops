@@ -624,11 +624,16 @@ def get_task(task_id: str) -> TaskScenario:
 
 
 def list_tasks() -> list[TaskScenario]:
-    """Return all benchmark tasks organised into three splits.
+    """Return the fixed benchmark task catalog.
+
+    The catalog is deterministic and identical across all deployments:
 
     - **Showcase** (3): hand-crafted built-in tasks for demos and README.
     - **Generated holdout** (7): seeded tasks never used for agent tuning.
-    - **ISO replay** (up to 3): real chargeback data tasks when CSV is present.
+
+    ISO replay tasks are available via ``list_iso_tasks()`` and the
+    ``/generate`` endpoint but are excluded from the default catalog so
+    that scores and task counts are always comparable.
     """
 
     try:
@@ -654,15 +659,16 @@ def list_tasks() -> list[TaskScenario]:
         generate_task(seed=77, difficulty="nightmare"),
     ]
 
-    # --- ISO replay split (real data, when available) ---
-    replay: list[TaskScenario] = []
-    try:
-        try:
-            from .iso_adapter import generate_iso_suite
-        except ImportError:  # pragma: no cover
-            from iso_adapter import generate_iso_suite
-        replay = generate_iso_suite(easy_count=1, medium_count=1, hard_count=1)
-    except Exception:
-        pass
+    return showcase + holdout
 
-    return showcase + holdout + replay
+
+def list_iso_tasks() -> list[TaskScenario]:
+    """Return ISO 20022 replay tasks.  Raises on failure instead of
+    silently returning an empty list so data/import issues are visible."""
+
+    try:
+        from .iso_adapter import generate_iso_suite
+    except ImportError:  # pragma: no cover
+        from iso_adapter import generate_iso_suite
+
+    return generate_iso_suite(easy_count=1, medium_count=1, hard_count=1)

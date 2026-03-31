@@ -93,7 +93,13 @@ class ChargebackOpsEnvironment(
     ) -> ChargebackOpsObservation:
         task_id = kwargs.get("task_id")
         difficulty = kwargs.get("difficulty")
-        if task_id is None and difficulty in {"easy", "medium", "hard", "nightmare"}:
+        _VALID_DIFFICULTIES = {"easy", "medium", "hard", "nightmare"}
+        if difficulty is not None and difficulty not in _VALID_DIFFICULTIES:
+            raise ValueError(
+                f"Invalid difficulty {difficulty!r}. "
+                f"Must be one of: {', '.join(sorted(_VALID_DIFFICULTIES))}"
+            )
+        if task_id is None and difficulty in _VALID_DIFFICULTIES:
             resolved_seed = seed if seed is not None else int(kwargs.get("generated_seed", 42))
             task_id = f"generated_{difficulty}_s{resolved_seed}"
         if task_id is None:
@@ -457,21 +463,19 @@ class ChargebackOpsEnvironment(
         }
 
     def _episode_metrics(self) -> dict[str, float]:
-        required_total = 0
-        required_attached = 0
-        helpful_total = 0
-        helpful_attached = 0
+        """User-observable episode metrics.  Never exposes grader-internal
+        labels such as required/helpful/harmful evidence IDs or coverage
+        against the hidden answer key."""
         open_cases = 0
         urgent_cases = 0
         resolved_cases = 0
+        total_attached = 0
+        total_retrieved = 0
 
         for case in self._task.cases:
             progress = self._progress_by_case[case.case_id]
-            attached = set(progress.attached_evidence_ids)
-            required_total += len(case.required_evidence_ids)
-            required_attached += len(attached.intersection(case.required_evidence_ids))
-            helpful_total += len(case.helpful_evidence_ids)
-            helpful_attached += len(attached.intersection(case.helpful_evidence_ids))
+            total_attached += len(progress.attached_evidence_ids)
+            total_retrieved += len(progress.retrieved_evidence_ids)
             steps_until_deadline = case.deadline_step - self._state.step_count
             if progress.resolution_status == "open":
                 open_cases += 1
@@ -480,41 +484,37 @@ class ChargebackOpsEnvironment(
             else:
                 resolved_cases += 1
 
-        evidence_coverage = 1.0 if required_total == 0 else required_attached / required_total
-        helpful_coverage = 1.0 if helpful_total == 0 else helpful_attached / helpful_total
         deadline_pressure = 0.0 if len(self._task.cases) == 0 else urgent_cases / len(self._task.cases)
         triage_efficiency = resolved_cases / max(1, self._state.step_count)
         return {
-            "evidence_coverage_pct": round(evidence_coverage * 100, 2),
-            "helpful_evidence_coverage_pct": round(helpful_coverage * 100, 2),
+            "open_case_count": float(open_cases),
+            "resolved_case_count": float(resolved_cases),
             "deadline_pressure_index": round(deadline_pressure, 4),
             "triage_efficiency": round(triage_efficiency, 4),
-            "open_case_count": float(open_cases),
+            "total_evidence_attached": float(total_attached),
+            "total_evidence_retrieved": float(total_retrieved),
         }
 
     def _selected_case_info(self) -> dict[str, object]:
+        """Per-case diagnostic info visible to agents.  Only exposes
+        signals an analyst could observe (deadline proximity, which
+        systems haven't been queried, counts).  Does NOT expose which
+        evidence IDs are required, helpful, or harmful."""
         if self._selected_case_id is None:
             return {
                 "deadline_warning": False,
                 "unqueried_systems": [],
-                "missing_required_evidence": [],
-                "harmful_evidence_attached": [],
             }
 
         case = self._lookup_case(self._selected_case_id)
         progress = self._progress_by_case[case.case_id]
-        attached = set(progress.attached_evidence_ids)
         all_systems = {"orders", "payment", "shipping", "support", "refunds", "risk"}
         return {
             "deadline_warning": (case.deadline_step - self._state.step_count) <= 2,
             "unqueried_systems": sorted(all_systems.difference(progress.revealed_systems)),
-            "missing_required_evidence": sorted(set(case.required_evidence_ids).difference(attached)),
-            "harmful_evidence_attached": sorted(set(case.harmful_evidence_ids).intersection(attached)),
-            "selected_case_metrics": {
-                "attached_evidence_count": len(progress.attached_evidence_ids),
-                "retrieved_evidence_count": len(progress.retrieved_evidence_ids),
-                "steps_until_deadline": case.deadline_step - self._state.step_count,
-            },
+            "attached_evidence_count": len(progress.attached_evidence_ids),
+            "retrieved_evidence_count": len(progress.retrieved_evidence_ids),
+            "steps_until_deadline": case.deadline_step - self._state.step_count,
         }
 
     def _build_queue(self) -> list[CaseQueueItem]:

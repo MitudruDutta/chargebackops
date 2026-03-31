@@ -323,21 +323,19 @@ Observations are designed to look like an analyst workspace rather than a toy qu
 - masked card numbers
 - deadline-relative queue summaries
 
-Each step also returns a diagnostic `info` payload with:
+Each step also returns a diagnostic `info` payload with analyst-observable signals only (no grader answer-key leakage):
 
-- `deadline_warning`
-- `unqueried_systems`
-- `missing_required_evidence`
-- `harmful_evidence_attached`
-- `episode_metrics`
+- `deadline_warning` — true when the selected case has ≤2 steps until deadline
+- `unqueried_systems` — which of the 6 merchant systems haven't been queried yet
+- `attached_evidence_count` / `retrieved_evidence_count` — counts without revealing quality labels
+- `steps_until_deadline` — exact steps remaining for the selected case
 
-Episode-level state tracks research-oriented metrics such as:
+Episode-level metrics track operational signals:
 
-- evidence coverage percentage
-- helpful evidence coverage percentage
-- deadline pressure index
-- triage efficiency
-- open case count
+- deadline pressure index (fraction of cases with ≤2 steps to deadline)
+- triage efficiency (resolved cases per step)
+- open / resolved case counts
+- total evidence attached / retrieved
 
 ## Quick Start
 
