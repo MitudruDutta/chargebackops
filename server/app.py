@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
@@ -25,6 +27,7 @@ try:
     )
     from ..scenarios.simulation import list_tasks
     from .chargeback_ops_environment import ChargebackOpsEnvironment
+    from .demo_ui import build_demo
 except ImportError:  # pragma: no cover
     from runners.baseline_runner import run_baseline
     from core.episode_store import get_report, list_reports
@@ -38,6 +41,7 @@ except ImportError:  # pragma: no cover
     )
     from scenarios.simulation import list_tasks
     from server.chargeback_ops_environment import ChargebackOpsEnvironment
+    from server.demo_ui import build_demo
 
 
 app = create_app(
@@ -47,6 +51,11 @@ app = create_app(
     env_name="chargeback_ops",
     max_concurrent_envs=8,
 )
+
+with suppress(Exception):
+    import gradio as gr
+
+    app = gr.mount_gradio_app(app, build_demo(), path="/demo")
 
 
 @app.get("/")
@@ -60,6 +69,7 @@ def root() -> JSONResponse:
             "docs_url": "/docs",
             "health_url": "/health",
             "tasks_url": "/tasks",
+            "demo_url": "/demo",
         }
     )
 

@@ -9,6 +9,17 @@ def test_reset_returns_task_observation():
     assert obs.task_id == "goods_not_received_easy"
     assert obs.steps_remaining == 10
     assert len(obs.queue) == 1
+    assert obs.queue[0].transaction_id.startswith("txn_")
+    assert obs.queue[0].merchant_mcc.isdigit()
+    assert obs.queue[0].masked_card.startswith("****")
+
+
+def test_reset_accepts_curriculum_difficulty():
+    env = ChargebackOpsEnvironment()
+    obs = env.reset(difficulty="hard", seed=7)
+    assert obs.task_id == "generated_hard_s7"
+    assert obs.difficulty == "hard"
+    assert len(obs.queue) >= 2
 
 
 def test_easy_case_can_be_won():
@@ -77,6 +88,9 @@ def test_generated_task_runs_in_environment():
     case_id = obs.queue[0].case_id
     obs = env.step(ChargebackOpsAction(action_type="select_case", case_id=case_id))
     assert obs.selected_case_id == case_id
+    assert obs.visible_case is not None
+    assert obs.visible_case.transaction_timestamp.endswith("Z")
+    assert "episode_metrics" in obs.info
 
 
 def test_generated_task_covers_all_reason_codes():

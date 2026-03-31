@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
@@ -64,6 +66,15 @@ class ChargebackOpsEnvironment(
         self._latest_report = None
         self._reset_task_state()
 
+    _MERCHANT_PROFILES = {
+        "goods_not_received": ("Northwind Home", "5712"),
+        "fraud_cnp": ("TechForge Direct", "5732"),
+        "credit_not_processed": ("StreamClub Media", "4899"),
+        "duplicate_processing": ("Meridian Retail", "5311"),
+        "product_not_as_described": ("Aurora Commerce", "5942"),
+        "service_not_provided": ("Metro Service Group", "7299"),
+    }
+
     def _reset_task_state(self) -> None:
         self._progress_by_case = {
             case.case_id: CaseProgress() for case in self._task.cases
@@ -80,8 +91,13 @@ class ChargebackOpsEnvironment(
         episode_id: str | None = None,
         **kwargs,
     ) -> ChargebackOpsObservation:
-        del seed
-        task_id = kwargs.get("task_id", "goods_not_received_easy")
+        task_id = kwargs.get("task_id")
+        difficulty = kwargs.get("difficulty")
+        if task_id is None and difficulty in {"easy", "medium", "hard", "nightmare"}:
+            resolved_seed = seed if seed is not None else int(kwargs.get("generated_seed", 42))
+            task_id = f"generated_{difficulty}_s{resolved_seed}"
+        if task_id is None:
+            task_id = "goods_not_received_easy"
         self._task = get_task(task_id)
         self._state = ChargebackOpsState(
             episode_id=episode_id or str(uuid4()),
@@ -414,13 +430,107 @@ class ChargebackOpsEnvironment(
             for item in items
         }
 
+    def _case_fingerprint(self, case: InternalCase) -> str:
+        return hashlib.sha1(
+            f"{case.case_id}|{case.order_id}|{case.customer_id}|{case.reason_code}".encode("utf-8")
+        ).hexdigest()
+
+    def _case_display_metadata(self, case: InternalCase) -> dict[str, str]:
+        fingerprint = self._case_fingerprint(case)
+        merchant_name, merchant_mcc = self._MERCHANT_PROFILES.get(
+            case.reason_code,
+            ("Atlas Commerce", "5999"),
+        )
+        last4 = str(int(fingerprint[:8], 16))[-4:].zfill(4)
+        base_time = datetime(2025, 1, 1, 9, 0, tzinfo=timezone.utc)
+        txn_minutes = int(fingerprint[8:14], 16) % (180 * 24 * 60)
+        dispute_lag_hours = 24 + (int(fingerprint[14:18], 16) % 96)
+        transaction_dt = base_time + timedelta(minutes=txn_minutes)
+        dispute_dt = transaction_dt + timedelta(hours=dispute_lag_hours)
+        return {
+            "transaction_id": f"txn_{fingerprint[:14]}",
+            "transaction_timestamp": transaction_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "dispute_opened_at": dispute_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "merchant_name": merchant_name,
+            "merchant_mcc": merchant_mcc,
+            "masked_card": f"**** **** **** {last4}",
+        }
+
+    def _episode_metrics(self) -> dict[str, float]:
+        required_total = 0
+        required_attached = 0
+        helpful_total = 0
+        helpful_attached = 0
+        open_cases = 0
+        urgent_cases = 0
+        resolved_cases = 0
+
+        for case in self._task.cases:
+            progress = self._progress_by_case[case.case_id]
+            attached = set(progress.attached_evidence_ids)
+            required_total += len(case.required_evidence_ids)
+            required_attached += len(attached.intersection(case.required_evidence_ids))
+            helpful_total += len(case.helpful_evidence_ids)
+            helpful_attached += len(attached.intersection(case.helpful_evidence_ids))
+            steps_until_deadline = case.deadline_step - self._state.step_count
+            if progress.resolution_status == "open":
+                open_cases += 1
+                if steps_until_deadline <= 2:
+                    urgent_cases += 1
+            else:
+                resolved_cases += 1
+
+        evidence_coverage = 1.0 if required_total == 0 else required_attached / required_total
+        helpful_coverage = 1.0 if helpful_total == 0 else helpful_attached / helpful_total
+        deadline_pressure = 0.0 if len(self._task.cases) == 0 else urgent_cases / len(self._task.cases)
+        triage_efficiency = resolved_cases / max(1, self._state.step_count)
+        return {
+            "evidence_coverage_pct": round(evidence_coverage * 100, 2),
+            "helpful_evidence_coverage_pct": round(helpful_coverage * 100, 2),
+            "deadline_pressure_index": round(deadline_pressure, 4),
+            "triage_efficiency": round(triage_efficiency, 4),
+            "open_case_count": float(open_cases),
+        }
+
+    def _selected_case_info(self) -> dict[str, object]:
+        if self._selected_case_id is None:
+            return {
+                "deadline_warning": False,
+                "unqueried_systems": [],
+                "missing_required_evidence": [],
+                "harmful_evidence_attached": [],
+            }
+
+        case = self._lookup_case(self._selected_case_id)
+        progress = self._progress_by_case[case.case_id]
+        attached = set(progress.attached_evidence_ids)
+        all_systems = {"orders", "payment", "shipping", "support", "refunds", "risk"}
+        return {
+            "deadline_warning": (case.deadline_step - self._state.step_count) <= 2,
+            "unqueried_systems": sorted(all_systems.difference(progress.revealed_systems)),
+            "missing_required_evidence": sorted(set(case.required_evidence_ids).difference(attached)),
+            "harmful_evidence_attached": sorted(set(case.harmful_evidence_ids).intersection(attached)),
+            "selected_case_metrics": {
+                "attached_evidence_count": len(progress.attached_evidence_ids),
+                "retrieved_evidence_count": len(progress.retrieved_evidence_ids),
+                "steps_until_deadline": case.deadline_step - self._state.step_count,
+            },
+        }
+
     def _build_queue(self) -> list[CaseQueueItem]:
         queue = []
         for case in self._task.cases:
             progress = self._progress_by_case[case.case_id]
+            display = self._case_display_metadata(case)
             queue.append(
                 CaseQueueItem(
                     case_id=case.case_id,
+                    transaction_id=display["transaction_id"],
+                    transaction_timestamp=display["transaction_timestamp"],
+                    dispute_opened_at=display["dispute_opened_at"],
+                    merchant_name=display["merchant_name"],
+                    merchant_mcc=display["merchant_mcc"],
+                    masked_card=display["masked_card"],
                     amount=case.amount,
                     currency=case.currency,
                     reason_code=case.reason_code,
@@ -437,6 +547,7 @@ class ChargebackOpsEnvironment(
             return None
         case = self._lookup_case(self._selected_case_id)
         progress = self._progress_by_case[case.case_id]
+        display = self._case_display_metadata(case)
         evidence_map = self._evidence_map(case)
         retrieved = [
             EvidenceCard(
@@ -467,8 +578,14 @@ class ChargebackOpsEnvironment(
             )
         return VisibleCase(
             case_id=case.case_id,
+            transaction_id=display["transaction_id"],
+            transaction_timestamp=display["transaction_timestamp"],
+            dispute_opened_at=display["dispute_opened_at"],
             order_id=case.order_id,
             customer_id=case.customer_id,
+            merchant_name=display["merchant_name"],
+            merchant_mcc=display["merchant_mcc"],
+            masked_card=display["masked_card"],
             amount=case.amount,
             currency=case.currency,
             reason_code=case.reason_code,
@@ -547,6 +664,12 @@ class ChargebackOpsEnvironment(
             for record in self._action_history
         ]
         self._state.selected_case_id = self._selected_case_id
+        self._state.metrics = self._episode_metrics()
+        observation_info = {
+            **self._selected_case_info(),
+            "episode_metrics": self._state.metrics,
+            "current_task_max_steps": self._task.max_steps,
+        }
 
         return ChargebackOpsObservation(
             task_id=self._task.task_id,
@@ -560,6 +683,7 @@ class ChargebackOpsEnvironment(
             available_actions=self._build_available_actions(),
             steps_remaining=max(0, self._task.max_steps - self._state.step_count),
             progress_score=round(progress_score, 4),
+            info=observation_info,
             grader_report=self._latest_report,
             done=done,
             reward=reward,
@@ -567,7 +691,8 @@ class ChargebackOpsEnvironment(
                 "reward_components": {
                     "step_reward": reward,
                     "progress_score": round(progress_score, 4),
-                }
+                },
+                "info": observation_info,
             },
         )
 

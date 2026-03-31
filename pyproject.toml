@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.51.0",
     "fastapi>=0.135.0",
+    "gradio>=6.0.0",
     "openai>=2.30.0",
     "openenv-core[core]>=0.2.2",
     "pydantic>=2.12.0",

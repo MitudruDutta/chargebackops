@@ -15,6 +15,7 @@ def test_root_endpoint_payload():
     assert response.status_code == 200
     assert b"ChargebackOps" in response.body
     assert b"tasks_url" in response.body
+    assert b"demo_url" in response.body
 
 
 def test_baseline_endpoint_works_without_api_key(monkeypatch):

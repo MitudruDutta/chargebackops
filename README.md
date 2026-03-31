@@ -19,6 +19,8 @@ ChargebackOps is an OpenEnv environment for merchant-side chargeback and dispute
 
 The repository is designed for agent evaluation rather than generic chat. It exposes a typed action space, deterministic state transitions, dense reward shaping, and programmatic grading so model behavior can be measured as operational performance.
 
+The HF Space also exposes a live demo at `/demo`, where a judge can run a full episode and watch the benchmark agent progress case-by-case with live observation and grading output.
+
 ## Why This Environment Matters
 
 Chargeback dispute handling is a real operations workflow. Analysts must:
@@ -311,6 +313,32 @@ Maps Stripe test-mode dispute objects into environment cases. Supports live API 
 | `submit_representment` | Submit a contest package with an optional rationale note |
 | `resolve_case` | Close a non-contest case |
 
+## Observation and State Signals
+
+Observations are designed to look like an analyst workspace rather than a toy queue. Each queue item and visible case now includes:
+
+- realistic transaction timestamps in ISO 8601 format
+- deterministic transaction IDs in `txn_...` format
+- merchant name and merchant category code (MCC)
+- masked card numbers
+- deadline-relative queue summaries
+
+Each step also returns a diagnostic `info` payload with:
+
+- `deadline_warning`
+- `unqueried_systems`
+- `missing_required_evidence`
+- `harmful_evidence_attached`
+- `episode_metrics`
+
+Episode-level state tracks research-oriented metrics such as:
+
+- evidence coverage percentage
+- helpful evidence coverage percentage
+- deadline pressure index
+- triage efficiency
+- open case count
+
 ## Quick Start
 
 ### Install
@@ -337,6 +365,18 @@ python -m runners.baseline_runner
 python -m evaluation.agent_brutal_audit
 ```
 
+### Curriculum Reset
+
+You can reset directly into a curriculum level instead of naming a fixed task:
+
+```bash
+curl -X POST http://localhost:8000/reset \
+  -H "Content-Type: application/json" \
+  -d '{"difficulty":"hard","seed":7}'
+```
+
+This resolves to a deterministic generated task such as `generated_hard_s7`.
+
 ### Run Server
 
 ```bash
@@ -357,6 +397,7 @@ docker run --rm -p 8000:8000 --env-file .env chargebackops
 | `GET` | `/` | Service info |
 | `GET` | `/health` | Health check |
 | `GET` | `/docs` | Interactive OpenAPI docs |
+| `GET` | `/demo` | Gradio step-by-step live demo |
 | `POST` | `/reset` | Start a new episode |
 | `POST` | `/step` | Apply an action |
 | `GET` | `/state` | Current environment state |
