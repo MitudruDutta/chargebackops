@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
+import logging
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -52,10 +52,12 @@ app = create_app(
     max_concurrent_envs=8,
 )
 
-with suppress(Exception):
+try:
     import gradio as gr
 
     app = gr.mount_gradio_app(app, build_demo(), path="/demo")
+except Exception:
+    logging.getLogger(__name__).warning("Gradio demo unavailable", exc_info=True)
 
 
 @app.get("/")
