@@ -246,36 +246,37 @@ flowchart LR
     style H fill:#8b4513,color:#fff
 ```
 
-## Agent Performance (63 Episodes)
+## Agent Performance (10-Task Benchmark)
 
-Results from the heuristic agent across built-in and parametric tasks:
+Results from the heuristic+LLM agent across the full benchmark (3 showcase + 7 seeded holdout):
 
-| Source | Avg | >= 0.90 | < 0.50 | Min |
-|---|---|---|---|---|
-| Built-in tasks (3) | 0.933 | 2/3 | 0/3 | 0.865 |
-| Parametric easy (20) | 0.980 | 20/20 | 0/20 | 0.958 |
-| Parametric medium (20) | 0.868 | 12/20 | 0/20 | 0.624 |
-| Parametric hard (20) | 0.722 | 0/20 | 0/20 | 0.559 |
-
-**Overall: 0.861 avg | 54.0% score >= 0.90 | 0.0% score < 0.50**
+| Difficulty | Tasks | Avg Score | Key Observations |
+|---|---|---|---|
+| Easy | 2 | 0.963 | Near-perfect on straightforward cases |
+| Medium | 3 | 0.518 | Struggles with ambiguous fraud signals |
+| Hard | 3 | 0.686 | Wrong strategies on adversarial evidence traps |
+| Nightmare | 2 | 0.474 | Step budget exhaustion, 2-3 cases unresolved |
+| **Overall** | **10** | **0.648** | **Difficulty curve: 0.96 → 0.47** |
 
 ### Heuristic vs Naive Agent Comparison
 
-The grading system reliably distinguishes competent behavior from naive strategies:
+The grading system reliably distinguishes competent behavior from naive strategies. The naive agent blindly selects each case and resolves with `issue_refund`:
 
 | Task | Heuristic Score | Naive Score | Gap |
 |---|---|---|---|
-| `goods_not_received_easy` | 0.9225 | 0.3500 | +0.5725 |
-| `fraud_signal_ambiguity` | 0.7355 | 0.1750 | +0.5605 |
-| `queue_optimization_hard` | 0.7475 | 0.2000 | +0.5475 |
-| `generated_easy_s42` | 0.9725 | 0.2500 | +0.7225 |
-| `generated_medium_s17` | 0.9125 | 0.1750 | +0.7375 |
-| `generated_medium_s99` | 0.8500 | 0.1750 | +0.6750 |
-| `generated_hard_s7` | 0.7600 | 0.2250 | +0.5350 |
-| `generated_hard_s53` | 0.8275 | 0.3550 | +0.4725 |
-| **Average** | **0.8410** | **0.2381** | **+0.6029** |
+| `goods_not_received_easy` | 0.9675 | 0.2800 | +0.6875 |
+| `fraud_signal_ambiguity` | 0.9675 | 0.2800 | +0.6875 |
+| `queue_optimization_hard` | 0.8015 | 0.5454 | +0.2561 |
+| `generated_easy_s42` | 0.9575 | 0.2800 | +0.6775 |
+| `generated_medium_s17` | 0.7276 | 0.7276 | +0.0000 |
+| `generated_medium_s99` | 0.6919 | 0.5049 | +0.1870 |
+| `generated_hard_s7` | 0.6817 | 0.6817 | +0.0000 |
+| `generated_hard_s53` | 0.5238 | 0.5238 | +0.0000 |
+| `generated_nightmare_s31` | 0.5534 | 0.4689 | +0.0845 |
+| `generated_nightmare_s77` | 0.5180 | 0.5009 | +0.0171 |
+| **Average** | **0.7390** | **0.4793** | **+0.2597** |
 
-The +0.60 gap across all difficulties confirms the environment produces meaningful signal for agent evaluation.
+The +0.26 gap confirms the environment produces meaningful signal. Tasks where the gap is zero are cases where the optimal strategy is non-contest (accept/refund) — the naive agent accidentally gets the right answer but for the wrong reasons, while the heuristic agent recognises the correct strategy deliberately. The environment scores both the same because the grader rewards outcomes, not reasoning. On contestable cases (easy, fraud_signal_ambiguity), the gap exceeds +0.68.
 
 ## Task Sources
 

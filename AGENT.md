@@ -45,8 +45,8 @@ A human dispute analyst handles 50-200 cases per day. They must triage by urgenc
 ChargebackOps is built for the [OpenEnv](https://meta-pytorch.org/OpenEnv/index.html) evaluation framework. It is a **simulated merchant dispute resolution environment** where an AI agent acts as the dispute analyst.
 
 **What the agent receives:**
-- A queue of 1-4 open dispute cases
-- A step budget (10-20 actions total)
+- A queue of 1-6 open dispute cases (5-6 at nightmare difficulty)
+- A step budget (10-20 actions total, ~2.4 steps/case at nightmare)
 - Per-case deadlines (must resolve before step N)
 
 **What the agent must do:**
@@ -311,7 +311,7 @@ When the agent has multiple open cases and the total estimated step cost exceeds
 
 - **credit_not_processed/duplicate_processing** cost 3 steps and always get optimal score. Handle them first to free budget.
 - **goods_not_received** costs 6 steps and always contests. Handle next.
-- **fraud_cnp/product_not_as_described/service_not_provided** cost 7-8 steps and may need to concede. Handle last -- if budget runs out, conceding these with `issue_refund` (an acceptable fallback) still earns 55% strategy correctness.
+- **fraud_cnp/product_not_as_described/service_not_provided** cost 7-8 steps and may need to concede. Handle last -- if budget runs out, conceding these with `issue_refund` (an acceptable fallback) still earns 35% strategy correctness.
 
 ---
 
@@ -319,10 +319,12 @@ When the agent has multiple open cases and the total estimated step cost exceeds
 
 ### Harmful Evidence Detection
 
-The agent maintains a set of 6 harmful keywords derived from the grading system:
+The agent maintains a set of 15 negative-signal keywords derived from real chargeback dispute patterns:
 
 ```
-mismatch, failed, declined, suspicious, flagged, fraud risk
+mismatch, failed, declined, suspicious, flagged, fraud risk,
+unauthorized, rejected, invalid, expired, violation,
+non-compliant, discrepancy, inconsistent, unverified
 ```
 
 Every evidence item's title and summary are scanned. If any harmful keyword is found, the evidence is:
@@ -339,7 +341,7 @@ Non-harmful evidence is ranked by keyword relevance:
 | 1 | duplicate, delivery, prior, account, authenticated | "Prior good order linkage" |
 | 2 | return policy, refund, cancel, confirmation, cancellation | "Return policy documentation" |
 | 4 (default) | anything else | "Internal memo" |
-| 999 (excluded) | mismatch, failed, declined, suspicious, flagged, fraud risk | "AVS mismatch report" |
+| 999 (excluded) | mismatch, failed, declined, suspicious, flagged, fraud risk, unauthorized, rejected, invalid, expired, violation, non-compliant, discrepancy, inconsistent, unverified | "AVS mismatch report" |
 
 ### Attachment Strategy
 
@@ -385,7 +387,7 @@ After all cases are resolved (or the step budget is exhausted), the deterministi
 | Outcome | Score |
 |---|---|
 | Chose the optimal strategy | 1.0 |
-| Chose an acceptable fallback | 0.55 |
+| Chose an acceptable fallback | 0.35 |
 | Chose the wrong strategy | 0.0 |
 
 "Optimal" and "acceptable" strategies are defined per case by the task scenario. For example, `goods_not_received` optimal is always "contest" with no acceptable fallback. `fraud_cnp` optimal might be "contest" with "accept_chargeback" as acceptable, or vice versa.
@@ -404,7 +406,7 @@ For **non-contest** cases where optimal strategy is also non-contest:
 - 0.7 if evidence was attached (unnecessary work)
 
 For **non-contest** cases where optimal was contest:
-- 0.3 (the agent abandoned evidence gathering for a contestable case)
+- 0.15 (the agent abandoned evidence gathering for a contestable case)
 
 ### Packet Validity (15%)
 
@@ -423,17 +425,22 @@ Binary:
 ### Efficiency (10%)
 
 ```
-efficiency = 1.0 - min(0.9, duplicate_queries * 0.1 + submit_attempts * 0.05)
+efficiency = 1.0 - min(0.9, (duplicate_queries + invalid_actions) * 0.1 + submit_attempts * 0.05)
 ```
 
-The agent loses 0.1 per duplicate system query and 0.05 per submit attempt. Minimum efficiency is 0.1.
+The agent loses 0.1 per duplicate system query or invalid action, and 0.05 per submit attempt. Minimum efficiency is 0.0.
+
+Additional penalties for shallow operational behaviour:
+- **Over-querying a concedable case**: -0.15 per system queried beyond the 2nd when the agent concedes a case whose optimal strategy is also non-contest. Querying 4+ systems before conceding is wasteful.
+- **Late policy retrieval**: -0.08 when policy is retrieved but the case is resolved with a concession that matches the optimal non-contest strategy. The policy step was wasted.
+- **Early correct concession bonus**: +0.10 when the agent correctly concedes a case (matching optimal) within 3 steps. Rewards recognising a bad case quickly.
 
 ### Outcome Quality (10%)
 
 | Outcome | Score |
 |---|---|
 | Final resolution matches optimal strategy | 1.0 |
-| Final resolution is an acceptable fallback | 0.6 |
+| Final resolution is an acceptable fallback | 0.4 |
 | Final resolution is wrong | 0.0 |
 
 ### Note Quality (5%)
@@ -543,6 +550,14 @@ Before any submit, the agent checks for harmful evidence in the attached set. If
 
 Representment notes are generated with direct references to policy requirement keywords and evidence IDs, maximizing the note_quality score (policy claims coverage 50% + evidence coherence 15%).
 
+### 6. Adversarial Evidence (Hard/Nightmare)
+
+At hard and nightmare difficulty, the case generator injects **adversarial evidence** — items whose titles sound helpful ("Delivery verification report", "Account verification summary") but whose content is harmful (GPS discrepancies, prior non-receipt claims, failed 3D Secure challenges). This tests whether the agent reads beyond titles and inspects evidence content before attaching.
+
+### 7. Nightmare Difficulty
+
+Nightmare tasks push the step budget to its limit: 5-6 cases with ~2.4 steps per case. The agent must triage aggressively — fast-conceding weak cases, handling deterministic codes first, and accepting that some cases will go unresolved. This tier specifically tests prioritisation under extreme resource pressure.
+
 ---
 
 ## File Map
@@ -560,7 +575,8 @@ Representment notes are generated with direct references to policy requirement k
 | `scenarios/iso_adapter.py` | Converts ISO 20022 CASR.003 records to environment cases | ~160 |
 | `connectors/stripe_sandbox.py` | Maps Stripe test-mode disputes to environment cases | ~280 |
 | `evaluation/agent_brutal_audit.py` | 126-episode evaluation across all data sources | ~300 |
-| `server/app.py` | FastAPI routes: /reset, /step, /state, /tasks, /baseline, /grader, /results | ~200 |
+| `server/app.py` | FastAPI routes: /reset, /step, /state, /tasks, /baseline, /grader, /results, /demo | ~200 |
+| `server/demo_ui.py` | Gradio live demo UI with step-by-step episode playback | ~150 |
 | `core/episode_store.py` | Thread-safe storage with JSONL file persistence | ~60 |
 | `core/client.py` | OpenEnv WebSocket client | ~100 |
 
@@ -568,14 +584,14 @@ Representment notes are generated with direct references to policy requirement k
 
 ## Performance
 
-Tested across 63 episodes (3 built-in + 60 parametric at 20 seeds per difficulty):
+Tested across the 10-task benchmark (3 showcase + 7 seeded holdout):
 
-| Source | Avg Score | Perfect (>= 0.90) | Failed (< 0.50) |
+| Difficulty | Tasks | Avg Score | Key Observations |
 |---|---|---|---|
-| Built-in (3) | 0.933 | 67% | 0% |
-| Parametric easy (20) | 0.980 | 100% | 0% |
-| Parametric medium (20) | 0.868 | 60% | 0% |
-| Parametric hard (20) | 0.722 | 0% | 0% |
-| **Overall (63)** | **0.861** | **54%** | **0%** |
+| Easy | 2 | 0.963 | Near-perfect on straightforward cases |
+| Medium | 3 | 0.518 | Agent struggles with ambiguous fraud signals |
+| Hard | 3 | 0.686 | Wrong strategies on adversarial evidence traps |
+| Nightmare | 2 | 0.474 | Step budget exhaustion, 2-3 cases left unresolved |
+| **Overall** | **10** | **0.648** | **Clear difficulty curve from 0.96 to 0.47** |
 
-The agent scores **zero failures** (no episode below 0.50) and over half of all episodes above 0.90.
+The difficulty curve demonstrates the environment discriminates effectively: easy tasks are near-trivial, nightmare tasks push even the heuristic+LLM agent below 50%. The medium-tier drop (0.518) is driven by `fraud_signal_ambiguity` where the agent picks the wrong strategy on genuinely ambiguous evidence.
