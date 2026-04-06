@@ -1,60 +1,50 @@
 # OpenEnv Overview
 
-OpenEnv is a framework for building and evaluating AI agent environments. Think of it as a standardized way to create benchmarks that test how well AI agents perform real-world tasks.
+OpenEnv is a framework for building and evaluating AI agent environments. Most AI benchmarks test knowledge through Q&A or multiple choice. OpenEnv tests **operational competence** — can an agent actually perform a multi-step job under constraints, make trade-off decisions, and handle real-world workflows?
 
-## Core Idea
+## The Problem OpenEnv Solves
 
-Most AI benchmarks test knowledge (Q&A, multiple choice). OpenEnv tests **operational competence**: can an agent actually do a job, navigate a workflow, and make multi-step decisions under constraints?
+There is no standard way to measure whether an AI agent can reliably handle operational work. Agents are increasingly deployed for tasks like customer support, code review, compliance checks, and dispute handling — but evaluation is ad hoc, non-reproducible, and rarely involves realistic constraints like deadlines, partial information, or multi-objective trade-offs.
+
+OpenEnv fills this gap the same way ImageNet standardized image classification benchmarks. It provides a common interface so that any environment can be plugged in, any agent can be tested, and results are comparable across teams and models.
 
 ## How It Works
 
-OpenEnv defines a standard interface that every environment must follow:
+Every OpenEnv environment implements three methods:
 
 ```python
-reset(task_id) -> Observation  # Start a new episode
-step(action)   -> Observation  # Take an action and get feedback
-state()        -> State        # Current environment state
+reset(task_id) -> Observation  # Start a new episode with a specific task
+step(action)   -> Observation  # Take one action, get updated observation
+state()        -> State        # Full environment state (includes grader report when done)
 ```
 
-This follows the same pattern as OpenAI Gym/Gymnasium (used in reinforcement learning), but applied to LLM agents doing operational tasks.
+This follows the same pattern as OpenAI Gym / Gymnasium from reinforcement learning, but applied to LLM agents performing operational tasks rather than game-playing or robotics control.
 
-## What an Environment Is
+## What Makes a Good OpenEnv Environment
 
-An environment is a simulated workspace. For ChargebackOps, that workspace is a merchant dispute desk. Other examples include:
+An environment models a real-world workspace. For ChargebackOps, that workspace is a merchant dispute analyst's desk. The key requirements:
 
-- A customer support queue
-- A code review pipeline
-- A medical triage system
-- An inventory management console
+1. **Real-world workflow** — the task must reflect something humans actually do, with genuine decision complexity
+2. **Typed action space** — discrete, well-defined actions (not free-form text generation)
+3. **Deterministic grading** — the same sequence of actions always produces the same score, enabling reproducible evaluation
+4. **Baseline agent** — a working agent that demonstrates the environment is solvable and produces a reference score
+5. **Deployable** — runs as a Docker container on Hugging Face Spaces with standard HTTP endpoints
 
-Each environment provides:
+## How OpenEnv Helps ChargebackOps
 
-- **Tasks**: Specific scenarios to solve
-- **Actions**: What the agent can do
-- **Observations**: What the agent sees after each action
-- **Grading**: Deterministic scoring of performance
+Chargeback dispute handling involves triaging cases by urgency, querying the right merchant systems for evidence, filtering out harmful artifacts, deciding whether to contest or concede, and submitting representment packages before hard deadlines. This is exactly the kind of multi-step, constraint-heavy, tool-using workflow that OpenEnv is designed to evaluate.
 
-## What OpenEnv Provides (`openenv-core`)
+Without OpenEnv, testing whether an agent can handle this workflow would require building custom evaluation infrastructure from scratch — a non-standard API, ad hoc scoring, no way to compare results across different agents or models. OpenEnv provides:
 
-- **Environment base class**: Subclass it to build your environment
-- **`EnvClient`**: WebSocket client for agents to connect remotely
-- **HTTP server scaffolding**: `create_app()` gives you a FastAPI server with `/reset`, `/step`, `/state`, and `/health` endpoints
-- **Validation tooling**: `openenv validate .` checks that your environment meets the spec
+- **`openenv-core`** — the `Environment` base class, typed `Action`/`Observation`/`State` contracts, and `create_app()` which gives a FastAPI server with `/reset`, `/step`, `/state`, and `/health` endpoints out of the box
+- **`EnvClient`** — a WebSocket client so agents can connect remotely without importing environment internals
+- **`openenv validate .`** — a validation tool that checks spec compliance, endpoint availability, and deployment readiness
+- **Standardised evaluation** — in Phase 2 of the hackathon, a standard LLM agent (Nemotron 3 Super) runs against all submitted environments, producing directly comparable scores across every team's environment
 
-## Hackathon Context
+## The Hackathon
 
-The OpenEnv hackathon asks participants to build an environment, not an agent. You are creating the test, not the test-taker.
+The OpenEnv hackathon asks participants to build an environment, not an agent. The submission is the test, not the test-taker.
 
-The environment should:
+Round 1 evaluates environments on real-world utility (30%), task and grader quality (25%), environment design (20%), code quality (15%), and creativity (10%). Round 2 runs a standard agent against all qualifying environments to measure how well each environment discriminates between good and bad agent behaviour.
 
-1. Model a real-world workflow
-2. Have a typed action space (not free-form text)
-3. Have deterministic grading (same actions -> same score)
-4. Include a baseline agent that demonstrates the environment works
-5. Deploy as a Docker container on Hugging Face Spaces
-
-## Why It Matters
-
-There is still no standard way to measure whether an AI agent can reliably handle operational work. OpenEnv aims to fill that gap, similar to how ImageNet standardized image-classification benchmarks.
-
-ChargebackOps is one such benchmark: it tests whether an agent can handle merchant dispute operations, including triaging cases, gathering evidence, making contest/concede decisions, and respecting deadlines.
+ChargebackOps is built to perform well on both rounds: the 7-dimension deterministic grader produces a clear difficulty curve (easy 0.96 → nightmare 0.47), and the typed action space with dense reward shaping gives any standard agent enough signal to learn the environment within a single episode.
