@@ -32,6 +32,9 @@ class CaseQueueItem(BaseModel):
     merchant_name: str
     merchant_mcc: str
     masked_card: str
+    card_network: str
+    network_reason_code: str
+    response_window_days: int
     amount: float
     currency: str
     reason_code: str
@@ -71,6 +74,10 @@ class VisibleCase(BaseModel):
     merchant_name: str
     merchant_mcc: str
     masked_card: str
+    card_network: str
+    network_reason_code: str
+    response_window_days: int
+    compelling_evidence_category: str
     amount: float
     currency: str
     reason_code: str

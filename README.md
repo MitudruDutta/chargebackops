@@ -10,205 +10,49 @@ pinned: false
 
 # ChargebackOps
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
-![OpenEnv](https://img.shields.io/badge/OpenEnv-Compatible-111827)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)
+An OpenEnv environment that simulates merchant-side chargeback dispute operations.
 
-ChargebackOps is an OpenEnv environment for merchant-side chargeback and dispute operations. The agent acts as a dispute analyst: it triages open disputes, retrieves evidence from merchant systems, decides whether to contest or concede, and resolves each case under deadline and step-budget pressure.
+Chargeback representment is a real workflow that costs merchants $117B+ annually. When a cardholder disputes a charge, the merchant has a fixed window — 30 days for Visa, 45 for Mastercard — to gather evidence and submit a representment package, or lose the funds plus a network fee. Real analysts handle 50-200 cases daily, triaging by urgency, querying internal systems, filtering out evidence that would hurt their case, and deciding whether to contest or concede. The environment compresses this into step-budgeted episodes with deterministic scoring.
 
-The repository is designed for agent evaluation rather than generic chat. It exposes a typed action space, deterministic state transitions, dense reward shaping, and programmatic grading so model behavior can be measured as operational performance.
+Each case carries real card network metadata: Visa reason code 13.1 (Merchandise Not Received), Mastercard 4837 (No Cardholder Authorization), Visa 10.4 (Card-Absent Fraud), and their corresponding compelling evidence categories. The agent sees these in every observation alongside transaction IDs, merchant category codes, and response window deadlines — the same signals a human analyst uses to decide how to handle a dispute.
 
-The HF Space also exposes a live demo at `/demo`, where a judge can run a full episode and watch the benchmark agent progress case-by-case with live observation and grading output.
+The HF Space exposes a live demo at `/demo` for step-by-step episode playback with grading output.
 
-## Why This Environment Matters
-
-Chargeback dispute handling is a real operations workflow. Analysts must:
-
-- interpret reason codes and response deadlines
-- gather evidence from the correct internal systems while avoiding harmful artifacts
-- decide whether to contest, accept, or refund
-- prioritize multiple disputes by urgency, recoverability, and operational cost
-
-That makes ChargebackOps a good benchmark for tool-using agents. It measures retrieval quality, decision quality, prioritization, and operational restraint in a controlled environment with deterministic scoring.
-
-## System Architecture
+## Architecture
 
 ```mermaid
 graph TB
     subgraph Agent["Agent Layer"]
-        INF["runners/inference.py\nOpenAI-compatible client\nProvider fallback chain"]
-        BL["runners/baseline_runner.py\nThree-tier decision pipeline\nHeuristic + LLM hybrid"]
-    end
-
-    subgraph API["API Layer"]
-        APP["FastAPI server\nserver/app.py"]
-        WS["OpenEnv WebSocket\ncore/client.py"]
+        INF["runners/inference.py\nOpenAI-compatible client"]
+        BL["runners/baseline_runner.py\nHeuristic + LLM hybrid"]
     end
 
     subgraph Core["Environment Core"]
         ENV["ChargebackOpsEnvironment\nstep() / reset() / state()"]
         SIM["Simulation Engine\nscenarios/simulation.py"]
         GRD["Deterministic Grader\nevaluation/grading.py"]
-        STORE["Episode Store\ncore/episode_store.py"]
     end
 
     subgraph Tasks["Task Sources"]
-        FIXED["Built-in Tasks\n3 handcrafted scenarios"]
-        GEN["Parametric Generator\nscenarios/case_generator.py\nSeeded RNG, infinite tasks"]
-        ISO["ISO 20022 Adapter\nscenarios/iso_adapter.py\n300 real chargeback records"]
-        STRIPE["Stripe Connector\nconnectors/stripe_sandbox.py\nLive API or synthetic disputes"]
+        FIXED["3 handcrafted scenarios"]
+        GEN["Parametric generator\nseeded RNG, infinite tasks"]
+        ISO["ISO 20022 adapter\n300 real chargeback records"]
+        STRIPE["Stripe sandbox connector"]
     end
 
-    subgraph Systems["Merchant Systems (6)"]
-        ORD["Orders"] --- PAY["Payment"]
-        SHIP["Shipping"] --- SUP["Support"]
-        REF["Refunds"] --- RISK["Risk"]
-    end
-
-    INF --> APP
+    INF --> ENV
     BL --> ENV
-    APP --> ENV
-    WS --> APP
     ENV --> SIM
     ENV --> GRD
-    GRD --> STORE
     SIM --> FIXED
     SIM --> GEN
     SIM --> ISO
     SIM --> STRIPE
-    ENV --> Systems
 ```
 
-## Agent Decision Pipeline
+## Grading
 
-The agent operates a three-tier decision pipeline on every step. Each observation passes through candidate generation, obvious-move detection, and then either LLM or heuristic resolution.
-
-```mermaid
-flowchart TD
-    OBS["Observation\n(queue, visible_case, steps_remaining)"] --> CA
-
-    subgraph Tier1["Tier 1: Candidate Generation"]
-        CA["candidate_actions()"] --> HARM{"Harmful evidence\nattached?"}
-        HARM -->|"Yes"| REM["remove_evidence\n(immediate return)"]
-        HARM -->|"No"| DL{"Deadline\n<= 1 step?"}
-        DL -->|"Yes"| URG["URGENT: submit or resolve\n(immediate return)"]
-        DL -->|"No"| BUD{"Budget too tight\nto contest?"}
-        BUD -->|"Yes: steps < 5 or\nlowest-value in triage"| CONC["Fast-concede\nwith issue_refund"]
-        BUD -->|"No"| BP{"Budget pressure?\nsteps <= cases * 2"}
-        BP -->|"Yes + concedable"| FAST["Fast set_strategy\n+ resolve_case"]
-        BP -->|"No"| RC{"Reason code\nhandler"}
-    end
-
-    subgraph Handlers["Reason Code Handlers"]
-        RC --> GNR["goods_not_received\nquery orders+shipping\nattach delivery proof\ncontest"]
-        RC --> FRD["fraud_cnp\ncheck inferred_strategy\nquery risk+support(+orders)\ncontest or accept"]
-        RC --> CNP["credit_not_processed\nduplicate_processing\nset issue_refund\nresolve immediately"]
-        RC --> PNA["product_not_as_described\nretrieve policy first\ncontest or accept per guidance"]
-        RC --> SNP["service_not_provided\nretrieve policy first\ncontest or accept per guidance"]
-        RC --> UNK["Unknown reason code\nquery all systems\ndefault to contest"]
-    end
-
-    subgraph Tier2["Tier 2: Obvious Move Detection"]
-        GNR & FRD & CNP & PNA & SNP & UNK --> OBV["_obvious_next_action()"]
-        OBV --> OC{"Only 1 candidate\nor all same type?"}
-        OC -->|"Yes"| TAKE["Take it\n(skip LLM)"]
-    end
-
-    subgraph Tier3["Tier 3: Ambiguity Resolution"]
-        OC -->|"No: genuine\nambiguity"| LLM{"LLM available?"}
-        LLM -->|"Yes"| CALL["Provider call\nOpenRouter → Gemini → Groq\nJSON: candidate_index + rationale"]
-        LLM -->|"No"| HEUR["_heuristic_pick()\nFirst candidate wins"]
-        CALL -->|"Success"| ACT["Execute chosen action"]
-        CALL -->|"All providers fail"| HEUR
-    end
-
-    TAKE --> ACT
-    HEUR --> ACT
-    REM --> ACT
-    URG --> ACT
-    CONC --> ACT
-    FAST --> ACT
-    ACT --> STEP["env.step(action)\nReturns new observation"]
-    STEP --> DONE{"Episode done?"}
-    DONE -->|"No"| OBS
-    DONE -->|"Yes"| GRADE["Grader scores\neach case"]
-
-    style OBS fill:#1a3a5c,color:#fff
-    style GRADE fill:#2d5016,color:#fff
-    style URG fill:#8b0000,color:#fff
-    style CONC fill:#8b4513,color:#fff
-    style REM fill:#800080,color:#fff
-```
-
-## Case Triage (Multi-Case Scenarios)
-
-When the agent faces multiple open cases with insufficient budget to contest all, it employs a triage strategy:
-
-```mermaid
-flowchart LR
-    START["Multiple open cases\ntotal_cost > budget"] --> SORT["Sort by:\n1. Deterministic codes first\n2. Highest amount first"]
-    SORT --> LOOP{"Next case"}
-    LOOP --> DET{"Deterministic\nstrategy?"}
-    DET -->|"Yes: goods_not_received\ncredit_not_processed\nduplicate_processing"| CHEAP["Handle first\n(3-6 steps, no policy needed)"]
-    DET -->|"No: fraud_cnp\nproduct_not_as_described\nservice_not_provided"| CHECK{"Steps remaining\n>= 5?"}
-    CHECK -->|"Yes"| CONTEST["Retrieve policy\nContest or concede\nper guidance"]
-    CHECK -->|"No"| CONCEDE["Fast-concede\nwith issue_refund\n(1 step)"]
-    CHEAP --> NEXT["Done, next case"]
-    CONTEST --> NEXT
-    CONCEDE --> NEXT
-    NEXT --> LOOP
-
-    style START fill:#1a3a5c,color:#fff
-    style CONCEDE fill:#8b4513,color:#fff
-    style CHEAP fill:#2d5016,color:#fff
-```
-
-## Episode Workflow
-
-```mermaid
-flowchart TD
-    A["reset(task_id)"] --> SEL["Select case from queue\n(priority: fast codes first,\nthen by amount desc)"]
-    SEL --> DET{"Reason code in\ndeterministic map?"}
-    DET -->|"goods_not_received"| SKIP["Infer strategy: contest\nSkip policy retrieval"]
-    DET -->|"credit_not_processed\nduplicate_processing"| REFUND["Infer strategy: issue_refund\nResolve immediately"]
-    DET -->|"fraud_cnp\nproduct_not_as_described\nservice_not_provided\nor unknown"| POL["Retrieve policy guidance"]
-    POL --> PARSE{"Parse guidance"}
-    PARSE -->|"'do not contest'\n'concede'\n'not supportable'"| ACCEPT["Strategy: accept_chargeback"]
-    PARSE -->|"'refund immediately'"| REFUND2["Strategy: issue_refund"]
-    PARSE -->|"Otherwise"| CONT["Strategy: contest"]
-
-    SKIP --> QUERY["Query merchant systems\n(deadline-aware: fewer queries\nwhen deadline is tight)"]
-    CONT --> QUERY
-
-    QUERY --> ATTACH["Attach all non-harmful evidence\n(filter by 15 negative-signal keywords:\nmismatch, failed, declined, suspicious,\nflagged, unauthorized, rejected, etc.)"]
-    ATTACH --> HARMFUL{"Any harmful\nevidence attached?"}
-    HARMFUL -->|"Yes"| REMOVE["remove_evidence\n(clean before submit)"]
-    HARMFUL -->|"No"| STRAT["Set strategy"]
-    REMOVE --> STRAT
-
-    STRAT --> SUBMIT["Generate representment note\n(policy keywords + evidence IDs)\nSubmit package"]
-
-    ACCEPT --> RESOLVE["Resolve case\n(accept_chargeback / issue_refund)"]
-    REFUND --> RESOLVE
-    REFUND2 --> RESOLVE
-
-    SUBMIT --> MORE{"More open cases?"}
-    RESOLVE --> MORE
-    MORE -->|"Yes"| NEAR{"Current case\nnear completion?"}
-    NEAR -->|"Yes (evidence attached,\n1-2 steps to finish)"| FINISH["Finish current case\nbefore switching"]
-    NEAR -->|"No"| SEL
-    FINISH --> MORE
-    MORE -->|"No / steps exhausted"| GRADE["Grader scores episode"]
-
-    style A fill:#2d5016,color:#fff
-    style GRADE fill:#1a3a5c,color:#fff
-    style REMOVE fill:#800080,color:#fff
-    style REFUND fill:#8b4513,color:#fff
-    style REFUND2 fill:#8b4513,color:#fff
-```
-
-## Grading System
+7-dimension deterministic grader, weighted per case by financial impact:
 
 ```mermaid
 pie title Case Score Weights
@@ -223,192 +67,72 @@ pie title Case Score Weights
 
 | Dimension | How It's Scored |
 |---|---|
-| **Strategy Correctness** | 1.0 = optimal strategy, 0.35 = acceptable fallback, 0.0 = wrong |
-| **Evidence Quality** | Contest: 0.7 × (required attached / total required) + 0.3 × (helpful / total helpful) − 0.25 per harmful. Non-contest: 1.0 if clean, 0.7 otherwise |
-| **Packet Validity** | Binary: 1.0 if all required evidence attached AND zero harmful, else 0.0 |
-| **Deadline Compliance** | Binary: 1.0 if resolved before deadline step, else 0.0 |
-| **Efficiency** | 1.0 − (duplicate_queries × 0.1 + submit_attempts × 0.05), min 0.1 |
-| **Outcome Quality** | 1.0 = optimal resolution, 0.4 = acceptable, 0.0 = wrong |
-| **Note Quality** | Contest only: word substance (20%) + policy keyword coverage (50%) + evidence ID refs (15%) − contextual harmful-term penalty (up to 36%) |
+| **Strategy** | 1.0 = optimal, 0.35 = acceptable fallback, 0.0 = wrong |
+| **Evidence** | Contest: 0.7 x required coverage + 0.3 x helpful coverage - 0.25 per harmful |
+| **Packet** | Binary: all required attached AND zero harmful = 1.0, else 0.0 |
+| **Deadline** | Binary: resolved before deadline = 1.0, else 0.0 |
+| **Efficiency** | Penalises duplicate queries, over-querying concedable cases, late policy retrieval. Rewards early correct concessions |
+| **Outcome** | 1.0 = matches optimal, 0.4 = acceptable, 0.0 = wrong |
+| **Note** | Policy keyword coverage + evidence ID refs - harmful term penalty |
 
-Each case is weighted by financial impact. Episode score normalizes across all cases to `[0.0, 1.0]`.
+## Benchmark Results
 
-## LLM Provider Fallback Chain
+10-task benchmark (3 showcase + 7 seeded holdout), heuristic+LLM agent:
 
-```mermaid
-flowchart LR
-    P["Primary provider\n(configured in .env)"] -->|"Fail / timeout"| OR["OpenRouter\nopenai/gpt-oss-120b"]
-    OR -->|"Fail"| GEM["Google Gemini\ngemini-2.5-flash"]
-    GEM -->|"Fail"| GRQ["Groq\nllama-3.3-70b-versatile"]
-    GRQ -->|"All fail"| H["Heuristic fallback\n_heuristic_pick()"]
-
-    style P fill:#2d5016,color:#fff
-    style H fill:#8b4513,color:#fff
-```
-
-## Agent Performance (10-Task Benchmark)
-
-Results from the heuristic+LLM agent across the full benchmark (3 showcase + 7 seeded holdout):
-
-| Difficulty | Tasks | Avg Score | Key Observations |
+| Difficulty | Tasks | Avg Score | Notes |
 |---|---|---|---|
-| Easy | 2 | 0.963 | Near-perfect on straightforward cases |
-| Medium | 3 | 0.518 | Struggles with ambiguous fraud signals |
-| Hard | 3 | 0.686 | Wrong strategies on adversarial evidence traps |
-| Nightmare | 2 | 0.474 | Step budget exhaustion, 2-3 cases unresolved |
-| **Overall** | **10** | **0.648** | **Difficulty curve: 0.96 → 0.47** |
+| Easy | 2 | 0.963 | Near-perfect |
+| Medium | 3 | 0.518 | Struggles with ambiguous fraud |
+| Hard | 3 | 0.686 | Adversarial evidence traps |
+| Nightmare | 2 | 0.474 | Step budget exhaustion |
+| **Overall** | **10** | **0.648** | **0.96 to 0.47 curve** |
 
-### Heuristic vs Naive Agent Comparison
+Heuristic vs naive (blind `issue_refund`) gap: **+0.26 average**, **+0.68 on contestable cases**.
 
-The grading system reliably distinguishes competent behavior from naive strategies. The naive agent blindly selects each case and resolves with `issue_refund`:
+## Action Space (9 typed actions)
 
-| Task | Heuristic Score | Naive Score | Gap |
-|---|---|---|---|
-| `goods_not_received_easy` | 0.9675 | 0.2800 | +0.6875 |
-| `fraud_signal_ambiguity` | 0.9675 | 0.2800 | +0.6875 |
-| `queue_optimization_hard` | 0.8015 | 0.5454 | +0.2561 |
-| `generated_easy_s42` | 0.9575 | 0.2800 | +0.6775 |
-| `generated_medium_s17` | 0.7276 | 0.7276 | +0.0000 |
-| `generated_medium_s99` | 0.6919 | 0.5049 | +0.1870 |
-| `generated_hard_s7` | 0.6817 | 0.6817 | +0.0000 |
-| `generated_hard_s53` | 0.5238 | 0.5238 | +0.0000 |
-| `generated_nightmare_s31` | 0.5534 | 0.4689 | +0.0845 |
-| `generated_nightmare_s77` | 0.5180 | 0.5009 | +0.0171 |
-| **Average** | **0.7390** | **0.4793** | **+0.2597** |
+`select_case` · `inspect_case` · `query_system` · `retrieve_policy` · `add_evidence` · `remove_evidence` · `set_strategy` · `submit_representment` · `resolve_case`
 
-The +0.26 gap confirms the environment produces meaningful signal. Tasks where the gap is zero are cases where the optimal strategy is non-contest (accept/refund) — the naive agent accidentally gets the right answer but for the wrong reasons, while the heuristic agent recognises the correct strategy deliberately. The environment scores both the same because the grader rewards outcomes, not reasoning. On contestable cases (easy, fraud_signal_ambiguity), the gap exceeds +0.68.
+6 merchant systems: orders, payment, shipping, support, refunds, risk.
 
 ## Task Sources
 
-### Built-in Scenarios (3 tasks)
-
-| Task ID | Difficulty | Objective |
-|---|---|---|
-| `goods_not_received_easy` | Easy | Contest a goods-not-received case with delivery proof |
-| `fraud_signal_ambiguity` | Medium | Handle CNP fraud with mixed evidence and harmful artifacts |
-| `queue_optimization_hard` | Hard | Maximize recovery across a multi-case queue under deadline pressure |
-
-### Parametric Generator (`case_generator.py`)
-
-Generates infinite reproducible tasks from seeded RNG across 6 reason code families. Usage: `generated_{difficulty}_s{seed}` (e.g., `generated_hard_s42`).
-
-### ISO 20022 Real Data (`iso_adapter.py`)
-
-Converts 300 real chargeback records from ISO 20022 CASR.003 format into environment cases. Covers fraud, goods-not-received, duplicate processing, credit-not-processed, product-not-as-described, and service-not-provided disputes.
-
-### Stripe Sandbox (`connectors/stripe_sandbox.py`)
-
-Maps Stripe test-mode dispute objects into environment cases. Supports live API access with `STRIPE_API_KEY` or falls back to synthetic Stripe-format disputes.
-
-## Action Space
-
-| Action | Purpose |
-|---|---|
-| `select_case` | Focus a case from the dispute queue |
-| `inspect_case` | Reveal analyst inspection notes |
-| `query_system` | Pull evidence from a merchant system |
-| `retrieve_policy` | Get reason-code guidance and required evidence |
-| `add_evidence` | Attach retrieved evidence to the representment package |
-| `remove_evidence` | Remove evidence (including harmful attachments) |
-| `set_strategy` | Choose `contest`, `accept_chargeback`, or `issue_refund` |
-| `submit_representment` | Submit a contest package with an optional rationale note |
-| `resolve_case` | Close a non-contest case |
-
-## Observation and State Signals
-
-Observations are designed to look like an analyst workspace rather than a toy queue. Each queue item and visible case now includes:
-
-- realistic transaction timestamps in ISO 8601 format
-- deterministic transaction IDs in `txn_...` format
-- merchant name and merchant category code (MCC)
-- masked card numbers
-- deadline-relative queue summaries
-
-Each step also returns a diagnostic `info` payload with analyst-observable signals only (no grader answer-key leakage):
-
-- `deadline_warning` — true when the selected case has ≤2 steps until deadline
-- `unqueried_systems` — which of the 6 merchant systems haven't been queried yet
-- `attached_evidence_count` / `retrieved_evidence_count` — counts without revealing quality labels
-- `steps_until_deadline` — exact steps remaining for the selected case
-
-Episode-level metrics track operational signals:
-
-- deadline pressure index (fraction of cases with ≤2 steps to deadline)
-- triage efficiency (resolved cases per step)
-- open / resolved case counts
-- total evidence attached / retrieved
+- **Built-in** (3): hand-crafted showcase scenarios
+- **Parametric generator**: seeded RNG across 6 reason codes, 4 difficulty tiers including adversarial evidence at hard/nightmare. Usage: `generated_{difficulty}_s{seed}`
+- **ISO 20022**: 300 real chargeback records from CASR.003 format
+- **Stripe sandbox**: live API or synthetic Stripe-format disputes
 
 ## Quick Start
 
-### Install
-
 ```bash
-uv sync --extra dev
-# or
 pip install -e ".[dev]"
-```
-
-### Configure
-
-```bash
 cp .env.example .env
-# Edit .env with your provider keys
-```
-
-### Validate
-
-```bash
 pytest -q tests
 openenv validate .
-python -m runners.baseline_runner
-python -m evaluation.agent_brutal_audit
+python -m runners.inference
 ```
 
-### Curriculum Reset
-
-You can reset directly into a curriculum level instead of naming a fixed task:
-
 ```bash
-curl -X POST http://localhost:8000/reset \
-  -H "Content-Type: application/json" \
-  -d '{"difficulty":"hard","seed":7}'
-```
-
-This resolves to a deterministic generated task such as `generated_hard_s7`.
-
-### Run Server
-
-```bash
-uvicorn chargeback_ops.server.app:app --host 0.0.0.0 --port 8000
-```
-
-### Docker
-
-```bash
+# Docker
 docker build -t chargebackops .
 docker run --rm -p 8000:8000 --env-file .env chargebackops
 ```
 
-## API Endpoints
+## API
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/` | Service info |
+| `POST` | `/reset` | Start episode |
+| `POST` | `/step` | Take action |
+| `GET` | `/state` | Current state |
+| `GET` | `/tasks` | Task catalog |
+| `GET` | `/demo` | Gradio live demo |
+| `GET/POST` | `/baseline` | Run heuristic agent |
+| `GET/POST` | `/grader` | Episode grade |
 | `GET` | `/health` | Health check |
-| `GET` | `/docs` | Interactive OpenAPI docs |
-| `GET` | `/demo` | Gradio step-by-step live demo |
-| `POST` | `/reset` | Start a new episode |
-| `POST` | `/step` | Apply an action |
-| `GET` | `/state` | Current environment state |
-| `GET` | `/tasks` | List available tasks |
-| `GET` | `/generate` | Generate parametric tasks |
-| `GET/POST` | `/grader` | Fetch latest episode grade |
-| `GET/POST` | `/baseline` | Run the heuristic baseline |
-| `GET` | `/results` | List all completed episode reports |
+| `GET` | `/docs` | OpenAPI docs |
 
 ## Inference Contract
-
-The required entry point [`inference.py`](inference.py) uses the OpenAI-compatible client with:
 
 ```bash
 API_BASE_URL=https://openrouter.ai/api/v1
@@ -416,47 +140,33 @@ MODEL_NAME=openai/gpt-oss-120b
 HF_TOKEN=your_key
 ```
 
-Supported providers: OpenRouter, OpenAI, Google Gemini, Groq, Anthropic-compatible gateways.
+Entry point: [`inference.py`](inference.py). Fallback chain: primary provider -> OpenRouter -> Gemini -> Groq -> heuristic.
 
-## Hugging Face Deployment
+## Limitations and Future Work
 
-1. Create a new HF Space with **Docker** SDK
-2. Push this repository
-3. Set secrets in Space Settings: `API_BASE_URL`, `MODEL_NAME`, `HF_TOKEN`
-4. Verify: `/health`, `/tasks`, `/baseline`
+- **Single-round disputes only.** Real chargeback flows involve pre-arbitration and arbitration stages after an initial representment fails. Adding multi-round dispute escalation would test longer-horizon planning.
+- **Simplified evidence model.** Actual representment requires network-specific compelling evidence categories (Visa CE 3.5 vs Mastercard's documentation requirements). The environment includes these as metadata but doesn't enforce network-specific evidence rules in the grader.
+- **No partial observability.** All 6 merchant systems are always available. In practice, systems go down, data is delayed, and evidence quality varies. System degradation would add a realistic stochastic element.
+- **Static case difficulty.** Cases don't evolve during an episode — the issuer doesn't respond or escalate. A reactive opponent model would better simulate real dispute dynamics.
+- **Currency and jurisdiction.** All cases are USD. Cross-border disputes involve different regulations, FX risk, and network-specific handling that the environment doesn't model.
 
 ## Project Layout
 
 ```
 .
-├── inference.py                 # Root entry point (submission contract)
-├── openenv.yaml                 # OpenEnv spec
-├── core/
-│   ├── models.py                # Pydantic action/observation/state models
-│   ├── client.py                # OpenEnv WebSocket client
-│   └── episode_store.py         # Thread-safe episode report store
-├── evaluation/
-│   ├── grading.py               # Deterministic 7-dimension grader
-│   └── agent_brutal_audit.py    # Comprehensive agent evaluation
-├── runners/
-│   ├── baseline_runner.py       # Heuristic agent with LLM fallback
-│   └── inference.py             # Challenge-compatible inference logic
-├── scenarios/
-│   ├── simulation.py            # Task definitions and case progress
-│   ├── case_generator.py        # Parametric seeded task generator
-│   └── iso_adapter.py           # ISO 20022 real data adapter
-├── server/
-│   ├── app.py                   # FastAPI application
-│   └── chargeback_ops_environment.py  # Core environment
-├── connectors/
-│   └── stripe_sandbox.py        # Stripe test-mode connector
-├── tests/
-│   ├── test_env.py              # Environment + generator tests
-│   ├── test_grader.py           # Grading logic tests
-│   ├── test_api.py              # API endpoint tests
-│   ├── test_requirements.py     # Problem statement compliance
-│   └── test_agent_audit.py      # Audit validation tests
-├── Dockerfile                   # Production container
-├── pyproject.toml               # Package config
-└── .env.example                 # Environment variable template
+├── inference.py              # Submission entry point
+├── openenv.yaml              # OpenEnv spec
+├── core/                     # Models, client, episode store
+├── evaluation/               # 7-dimension grader, audit suite
+├── runners/                  # Baseline agent, inference logic
+├── scenarios/                # Tasks, generator, ISO adapter
+├── server/                   # FastAPI app, environment, Gradio demo
+├── connectors/               # Stripe sandbox connector
+├── tests/                    # 21 tests (env, grader, API, compliance)
+├── Dockerfile
+└── pyproject.toml
 ```
+
+## License
+
+MIT

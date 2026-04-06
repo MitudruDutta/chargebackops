@@ -20,7 +20,7 @@ import random
 from typing import Any
 
 try:
-    from ..simulation import (
+    from ..scenarios.simulation import (
         InternalCase,
         InternalEvidence,
         TaskScenario,
@@ -28,7 +28,7 @@ try:
         StrategyName,
     )
 except ImportError:  # pragma: no cover
-    from simulation import (
+    from scenarios.simulation import (
         InternalCase,
         InternalEvidence,
         TaskScenario,
@@ -198,6 +198,17 @@ def dispute_to_case(dispute: dict[str, Any], case_index: int, *, deadline_step: 
     if optimal in ("accept_chargeback", "issue_refund") and reason_code not in ("credit_not_processed", "duplicate_processing"):
         guidance = f"Do not contest this {reason_code.replace('_', ' ')} dispute. Concede to avoid wasting resources."
 
+    # Stripe disputes come from any network; default to visa
+    _STRIPE_NETWORK_MAP = {
+        "goods_not_received": ("visa", "13.1", 30, "CE 3.5 — Merchandise Not Received"),
+        "fraud_cnp": ("visa", "10.4", 30, "CE 3.6 — Fraud, Card-Absent Environment"),
+        "credit_not_processed": ("visa", "13.6", 30, "CE 3.4 — Credit Not Processed"),
+        "duplicate_processing": ("visa", "12.4", 30, "CE 3.3 — Duplicate Processing"),
+        "product_not_as_described": ("visa", "13.3", 30, "CE 3.5 — Not as Described or Defective"),
+        "service_not_provided": ("visa", "13.1", 30, "CE 3.5 — Merchandise/Services Not Received"),
+    }
+    net_info = _STRIPE_NETWORK_MAP.get(reason_code, ("visa", "13.1", 30, ""))
+
     return InternalCase(
         case_id=f"CB-STRIPE{case_index}",
         order_id=dispute.get("charge", f"ch_stripe{case_index}"),
@@ -219,6 +230,10 @@ def dispute_to_case(dispute: dict[str, Any], case_index: int, *, deadline_step: 
         helpful_evidence_ids=hlp_ids,
         harmful_evidence_ids=hrm_ids,
         evidence_by_system=evidence,
+        card_network=net_info[0],
+        network_reason_code=net_info[1],
+        response_window_days=net_info[2],
+        compelling_evidence_category=net_info[3],
     )
 
 

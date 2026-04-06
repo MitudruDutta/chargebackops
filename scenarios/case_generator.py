@@ -76,6 +76,45 @@ class _CaseTemplate:
 # Amount / ID generation helpers
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Card network reason code mapping — real Visa / Mastercard codes
+# ---------------------------------------------------------------------------
+
+_NETWORK_REASON_CODES: dict[str, list[tuple[str, str, int, str]]] = {
+    # reason_code -> [(network, network_code, response_window_days, compelling_evidence_category), ...]
+    "goods_not_received": [
+        ("visa", "13.1", 30, "CE 3.5 — Merchandise Not Received"),
+        ("mastercard", "4855", 45, "Goods or Services Not Provided"),
+    ],
+    "fraud_cnp": [
+        ("visa", "10.4", 30, "CE 3.6 — Fraud, Card-Absent Environment"),
+        ("mastercard", "4837", 45, "No Cardholder Authorization"),
+    ],
+    "credit_not_processed": [
+        ("visa", "13.6", 30, "CE 3.4 — Credit Not Processed"),
+        ("mastercard", "4860", 45, "Credit Not Processed"),
+    ],
+    "duplicate_processing": [
+        ("visa", "12.4", 30, "CE 3.3 — Duplicate Processing"),
+        ("mastercard", "4834", 45, "Duplicate Processing"),
+    ],
+    "product_not_as_described": [
+        ("visa", "13.3", 30, "CE 3.5 — Not as Described or Defective"),
+        ("mastercard", "4853", 45, "Cardholder Dispute — Not as Described"),
+    ],
+    "service_not_provided": [
+        ("visa", "13.1", 30, "CE 3.5 — Merchandise/Services Not Received"),
+        ("mastercard", "4855", 45, "Goods or Services Not Provided"),
+    ],
+}
+
+
+def _assign_network(rng: random.Random, reason_code: str) -> tuple[str, str, int, str]:
+    """Pick a card network and return (network, code, window_days, ce_category)."""
+    options = _NETWORK_REASON_CODES.get(reason_code, [("visa", "13.1", 30, "")])
+    return rng.choice(options)
+
+
 _FIRST_NAMES = (
     "Alex", "Jordan", "Sam", "Morgan", "Casey", "Riley", "Taylor",
     "Quinn", "Avery", "Dakota", "Reese", "Blake", "Skyler", "Drew",
@@ -858,6 +897,8 @@ def generate_case(
             s for s in template.acceptable_strategies if s != template.weak_variant_strategy
         )
 
+    network, network_code, window_days, ce_category = _assign_network(rng, template.reason_code)
+
     return InternalCase(
         case_id=f"CB-G{case_index}",
         order_id=_order_id(rng),
@@ -879,6 +920,10 @@ def generate_case(
         helpful_evidence_ids=helpful_ids,
         harmful_evidence_ids=harmful_ids,
         evidence_by_system=evidence_by_system,
+        card_network=network,
+        network_reason_code=network_code,
+        response_window_days=window_days,
+        compelling_evidence_category=ce_category,
     )
 
 

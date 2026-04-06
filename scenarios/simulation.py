@@ -46,6 +46,11 @@ class InternalCase:
     required_evidence_ids: tuple[str, ...] = ()
     helpful_evidence_ids: tuple[str, ...] = ()
     harmful_evidence_ids: tuple[str, ...] = ()
+    # Card network metadata — mirrors real dispute identifiers
+    card_network: str = "visa"
+    network_reason_code: str = ""
+    response_window_days: int = 30
+    compelling_evidence_category: str = ""
 
 
 @dataclass(frozen=True)
@@ -152,6 +157,10 @@ TASKS: dict[str, TaskScenario] = {
                 required_evidence_ids=("E1-ORDER-CONF", "E1-DELIVERY-SCAN"),
                 helpful_evidence_ids=("E1-ORDER-CONF", "E1-DELIVERY-SCAN", "E1-SUPPORT-ACK"),
                 harmful_evidence_ids=(),
+                card_network="visa",
+                network_reason_code="13.1",
+                response_window_days=30,
+                compelling_evidence_category="CE 3.5 — Merchandise Not Received",
                 evidence_by_system={
                     "orders": (
                         _ev(
@@ -254,6 +263,10 @@ TASKS: dict[str, TaskScenario] = {
                 required_evidence_ids=("M1-PRIOR-ORDERS", "M1-ACCOUNT-CHAT"),
                 helpful_evidence_ids=("M1-PRIOR-ORDERS", "M1-ACCOUNT-CHAT", "M1-DELIVERY"),
                 harmful_evidence_ids=("M1-AVS-MISMATCH", "M1-CVV-MISMATCH"),
+                card_network="visa",
+                network_reason_code="10.4",
+                response_window_days=30,
+                compelling_evidence_category="CE 3.6 — Fraud, Card-Absent Environment",
                 evidence_by_system={
                     "orders": (
                         _ev(
@@ -369,6 +382,10 @@ TASKS: dict[str, TaskScenario] = {
                 required_evidence_ids=("H1-ORDER-CONF", "H1-SIGNATURE"),
                 helpful_evidence_ids=("H1-ORDER-CONF", "H1-SIGNATURE", "H1-DELIVERY-SCAN"),
                 harmful_evidence_ids=(),
+                card_network="mastercard",
+                network_reason_code="4855",
+                response_window_days=45,
+                compelling_evidence_category="Goods or Services Not Provided",
                 evidence_by_system={
                     "orders": (
                         _ev(
@@ -456,6 +473,10 @@ TASKS: dict[str, TaskScenario] = {
                 required_evidence_ids=(),
                 helpful_evidence_ids=(),
                 harmful_evidence_ids=("H2-AVS", "H2-CVV"),
+                card_network="mastercard",
+                network_reason_code="4837",
+                response_window_days=45,
+                compelling_evidence_category="No Cardholder Authorization",
                 evidence_by_system={
                     "orders": (
                         _ev(
@@ -539,6 +560,10 @@ TASKS: dict[str, TaskScenario] = {
                 required_evidence_ids=(),
                 helpful_evidence_ids=("H3-CANCEL", "H3-NO-REFUND"),
                 harmful_evidence_ids=(),
+                card_network="visa",
+                network_reason_code="13.6",
+                response_window_days=30,
+                compelling_evidence_category="CE 3.4 — Credit Not Processed",
                 evidence_by_system={
                     "orders": (
                         _ev(
