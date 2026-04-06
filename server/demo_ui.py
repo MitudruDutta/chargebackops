@@ -309,6 +309,9 @@ def build_demo() -> gr.Blocks:
 
     with gr.Blocks(title="ChargebackOps") as demo:
 
+        # Inject CSS (Gradio 6 moved css= to launch(); <style> tag works everywhere)
+        gr.HTML(f"<style>{_CSS}</style>")
+
         # Header
         gr.HTML(
             '<div class="dashboard-header">'

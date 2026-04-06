@@ -645,6 +645,18 @@ def get_task(task_id: str) -> TaskScenario:
             if task is not None:
                 return task
 
+    # Support Stripe-derived task ids: stripe_{difficulty}_{index}
+    m_stripe = re.match(r"^stripe_(easy|medium|hard)_(\d+)$", task_id)
+    if m_stripe:
+        try:
+            from connectors.stripe_sandbox import fetch_disputes, build_stripe_task
+        except ImportError:  # pragma: no cover
+            from ..connectors.stripe_sandbox import fetch_disputes, build_stripe_task
+        disputes = fetch_disputes(limit=10)
+        task = build_stripe_task(disputes, difficulty=m_stripe.group(1), task_index=int(m_stripe.group(2)))
+        if task is not None:
+            return task
+
     raise ValueError(f"Unknown task_id '{task_id}'. Available: {', '.join(TASKS)}")
 
 

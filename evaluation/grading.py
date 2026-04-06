@@ -100,15 +100,20 @@ def score_case(
         strategy_correctness = 0.0
 
     if final_resolution == "contest":
-        base_evidence_quality = 0.7 * _ratio(required_attached, len(case.required_evidence_ids))
-        bonus = 0.3 * _ratio(helpful_attached, max(1, len(case.helpful_evidence_ids)))
-        penalty = 0.25 * harmful_attached
-        evidence_quality = max(0.0, min(1.0, base_evidence_quality + bonus - penalty))
-        packet_validity = (
-            1.0
-            if required_attached == len(case.required_evidence_ids) and harmful_attached == 0
-            else 0.0
-        )
+        if case.optimal_strategy != "contest" and "contest" not in case.acceptable_strategies:
+            # Contesting a case that should not be contested — evidence is irrelevant
+            evidence_quality = 0.0
+            packet_validity = 0.0
+        else:
+            base_evidence_quality = 0.7 * _ratio(required_attached, len(case.required_evidence_ids))
+            bonus = 0.3 * _ratio(helpful_attached, max(1, len(case.helpful_evidence_ids)))
+            penalty = 0.25 * harmful_attached
+            evidence_quality = max(0.0, min(1.0, base_evidence_quality + bonus - penalty))
+            packet_validity = (
+                1.0
+                if required_attached == len(case.required_evidence_ids) and harmful_attached == 0
+                else 0.0
+            )
     else:
         if final_resolution in {"accept_chargeback", "issue_refund"}:
             if case.optimal_strategy == "contest":
