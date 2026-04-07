@@ -155,8 +155,13 @@ def _pick_with_openai_client(
         return shortlist[0], False, exc.__class__.__name__
 
 
-def run_inference() -> BaselineRunResult:
-    """Run the challenge-compatible inference baseline across all tasks."""
+def run_inference(*, structured_output: bool = True) -> BaselineRunResult:
+    """Run the challenge-compatible inference baseline across all tasks.
+
+    When *structured_output* is True (default), prints ``[START]``,
+    ``[STEP]``, and ``[END]`` markers to stdout so the challenge
+    validator can parse results.
+    """
 
     client, model_name, provider = _build_client()
     provider_calls_attempted = 0
@@ -165,8 +170,12 @@ def run_inference() -> BaselineRunResult:
 
     task_results: list[BaselineTaskResult] = []
     for task in list_tasks():
+        if structured_output:
+            print(f"[START] task={task.task_id}", flush=True)
+
         env = ChargebackOpsEnvironment()
         observation = env.reset(task_id=task.task_id)
+        step_num = 0
         while not observation.done:
             observation_payload = observation.model_dump()
             candidates = candidate_actions(observation_payload)
@@ -175,10 +184,16 @@ def run_inference() -> BaselineRunResult:
             if len(candidates) == 1:
                 candidate = candidates[0]
                 observation = env.step(candidate.action)
+                step_num += 1
+                if structured_output:
+                    print(f"[STEP] step={step_num} reward={observation.reward or 0.0}", flush=True)
                 continue
             obvious_candidate = _obvious_next_action(observation_payload, candidates)
             if obvious_candidate is not None:
                 observation = env.step(obvious_candidate.action)
+                step_num += 1
+                if structured_output:
+                    print(f"[STEP] step={step_num} reward={observation.reward or 0.0}", flush=True)
                 continue
             if client is not None and model_name:
                 candidate, succeeded, error_label = _pick_with_openai_client(
@@ -209,6 +224,9 @@ def run_inference() -> BaselineRunResult:
             else:
                 candidate = _heuristic_pick(candidates)
             observation = env.step(candidate.action)
+            step_num += 1
+            if structured_output:
+                print(f"[STEP] step={step_num} reward={observation.reward or 0.0}", flush=True)
 
         report = env.state.grader_report or grade_episode(
             task,
@@ -226,6 +244,8 @@ def run_inference() -> BaselineRunResult:
                 final_status=report.summary,
             )
         )
+        if structured_output:
+            print(f"[END] task={task.task_id} score={report.normalized_score} steps={env.state.step_count}", flush=True)
 
     average_score = round(
         sum(task_result.score for task_result in task_results) / len(task_results),
