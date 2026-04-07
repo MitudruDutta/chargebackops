@@ -88,11 +88,11 @@ def _default_headers(base_url: str | None) -> dict[str, str] | None:
     return headers or None
 
 
-def _build_client() -> tuple[OpenAI | None, str | None, str]:
-    base_url = os.getenv("API_BASE_URL")
-    model_name = os.getenv("MODEL_NAME")
-    api_key = os.getenv("HF_TOKEN")
-    if not (base_url and model_name and api_key):
+def _build_client() -> tuple[OpenAI | None, str, str]:
+    api_key = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+    base_url = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+    model_name = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
+    if not api_key:
         return None, model_name, _provider_label(base_url)
 
     client = OpenAI(
@@ -171,62 +171,74 @@ def run_inference(*, structured_output: bool = True) -> BaselineRunResult:
     task_results: list[BaselineTaskResult] = []
     for task in list_tasks():
         if structured_output:
-            print(f"[START] task={task.task_id}", flush=True)
+            print(f"[START] task={task.task_id} env=chargeback_ops model={model_name}", flush=True)
 
         env = ChargebackOpsEnvironment()
         observation = env.reset(task_id=task.task_id)
         step_num = 0
+        rewards: list[float] = []
+
         while not observation.done:
             observation_payload = observation.model_dump()
             candidates = candidate_actions(observation_payload)
             if not candidates:
                 break
+
+            candidate = None
             if len(candidates) == 1:
                 candidate = candidates[0]
-                observation = env.step(candidate.action)
-                step_num += 1
-                if structured_output:
-                    print(f"[STEP] step={step_num} reward={observation.reward or 0.0}", flush=True)
-                continue
-            obvious_candidate = _obvious_next_action(observation_payload, candidates)
-            if obvious_candidate is not None:
-                observation = env.step(obvious_candidate.action)
-                step_num += 1
-                if structured_output:
-                    print(f"[STEP] step={step_num} reward={observation.reward or 0.0}", flush=True)
-                continue
-            if client is not None and model_name:
-                candidate, succeeded, error_label = _pick_with_openai_client(
-                    client,
-                    model_name,
-                    observation_payload,
-                    candidates,
-                )
-                provider_calls_attempted += 1
-                # On primary failure, try the fallback provider.
-                if not succeeded:
-                    fb_client, fb_model = _build_fallback_client()
-                    if fb_client is not None and fb_model:
-                        candidate, fb_ok, fb_err = _pick_with_openai_client(
-                            fb_client, fb_model, observation_payload, candidates,
-                        )
-                        if fb_ok:
-                            succeeded = True
-                            error_label = None
-                provider_calls_succeeded += int(succeeded)
-                if not succeeded and error_label is not None:
-                    provider_errors[error_label] = provider_errors.get(error_label, 0) + 1
-                if _strict_llm_mode() and not succeeded:
-                    raise RuntimeError(
-                        "STRICT_LLM_MODE is enabled and the provider decision failed, "
-                        "so heuristic fallback is not allowed."
-                    )
             else:
-                candidate = _heuristic_pick(candidates)
-            observation = env.step(candidate.action)
+                obvious_candidate = _obvious_next_action(observation_payload, candidates)
+                if obvious_candidate is not None:
+                    candidate = obvious_candidate
+                elif client is not None and model_name:
+                    candidate, succeeded, error_label = _pick_with_openai_client(
+                        client,
+                        model_name,
+                        observation_payload,
+                        candidates,
+                    )
+                    provider_calls_attempted += 1
+                    if not succeeded:
+                        fb_client, fb_model = _build_fallback_client()
+                        if fb_client is not None and fb_model:
+                            candidate, fb_ok, fb_err = _pick_with_openai_client(
+                                fb_client, fb_model, observation_payload, candidates,
+                            )
+                            if fb_ok:
+                                succeeded = True
+                                error_label = None
+                    provider_calls_succeeded += int(succeeded)
+                    if not succeeded and error_label is not None:
+                        provider_errors[error_label] = provider_errors.get(error_label, 0) + 1
+                    if _strict_llm_mode() and not succeeded:
+                        raise RuntimeError(
+                            "STRICT_LLM_MODE is enabled and the provider decision failed, "
+                            "so heuristic fallback is not allowed."
+                        )
+                else:
+                    candidate = _heuristic_pick(candidates)
+
+            action = candidate.action
+            action_str = action.action_type
+            if action.case_id:
+                action_str += f"({action.case_id})"
+
+            observation = env.step(action)
             step_num += 1
+            reward = observation.reward or 0.0
+            rewards.append(reward)
+
             if structured_output:
-                print(f"[STEP] step={step_num} reward={observation.reward or 0.0}", flush=True)
+                error_val = "null"
+                if observation.last_action_result and "error" in observation.last_action_result.lower():
+                    error_val = observation.last_action_result
+                print(
+                    f"[STEP] step={step_num} action={action_str} "
+                    f"reward={reward:.2f} done={str(observation.done).lower()} "
+                    f"error={error_val}",
+                    flush=True,
+                )
 
         report = env.state.grader_report or grade_episode(
             task,
@@ -235,17 +247,23 @@ def run_inference(*, structured_output: bool = True) -> BaselineRunResult:
             env.state.episode_id or "",
             completed=env.state.completed,
         )
+        score = report.normalized_score
         task_results.append(
             BaselineTaskResult(
                 task_id=task.task_id,
                 title=task.title,
-                score=report.normalized_score,
+                score=score,
                 steps_used=env.state.step_count,
                 final_status=report.summary,
             )
         )
         if structured_output:
-            print(f"[END] task={task.task_id} score={report.normalized_score} steps={env.state.step_count}", flush=True)
+            rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+            print(
+                f"[END] success={str(score >= 0.1).lower()} steps={step_num} "
+                f"score={score:.2f} rewards={rewards_str}",
+                flush=True,
+            )
 
     average_score = round(
         sum(task_result.score for task_result in task_results) / len(task_results),
