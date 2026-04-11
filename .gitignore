@@ -34,8 +34,9 @@ Thumbs.db
 dist/
 build/
 
-# Local datasets (1.2GB+ — not for version control)
-data/
+# Local datasets (large files — not for version control)
+data/*
+!data/iso20022-card-chargeback-casr-003.csv
 
 # Episode logs (runtime artifacts)
 episode_logs/

@@ -58,4 +58,4 @@ def list_reports() -> list[GraderReport]:
     """Return all stored reports ordered by recency."""
 
     with _LOCK:
-        return list(_REPORTS.values())
+        return list(reversed(_REPORTS.values()))
