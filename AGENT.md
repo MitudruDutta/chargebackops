@@ -380,7 +380,7 @@ When the agent submits a contest, it generates a representment note. The grader 
 
 ## The Grading System
 
-After all cases are resolved (or the step budget is exhausted), the deterministic grader in `grading.py` scores each case across 7 dimensions:
+After all cases are resolved (or the step budget is exhausted), the grader scores each case across 7 dimensions. Each dimension is an OpenEnv `Rubric` subclass defined in `evaluation/rubrics.py`; they compose into a per-case `WeightedSum` and an episode-level `ChargebackOpsEpisodeRubric` that is wired into `env.rubric`. `evaluation/grading.py` keeps the legacy `score_case` / `grade_episode` API as a thin adapter over the rubric tree.
 
 ### Strategy Correctness (25%)
 
@@ -566,7 +566,8 @@ Nightmare tasks push the step budget to its limit: 5-6 cases with ~2.4 steps per
 |---|---|---|
 | `runners/baseline_runner.py` | The agent: decision pipeline, candidate generation, LLM integration, representment notes | ~1100 |
 | `server/chargeback_ops_environment.py` | The environment: step/reset/state, action execution, reward computation | ~500 |
-| `evaluation/grading.py` | Deterministic 7-dimension scoring, representment note grading | ~200 |
+| `evaluation/rubrics.py` | OpenEnv `Rubric` subclasses for all 7 scoring dimensions, composed via `WeightedSum` | ~300 |
+| `evaluation/grading.py` | Legacy `score_case` / `grade_episode` adapter that delegates to the rubric tree | ~120 |
 | `scenarios/simulation.py` | Task definitions, case progress tracking, evidence metadata | ~600 |
 | `core/models.py` | Pydantic models for actions, observations, state, grading | ~600 |
 | `runners/inference.py` | OpenEnv-compatible inference entry point with provider fallback | ~200 |

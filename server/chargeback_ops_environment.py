@@ -11,6 +11,7 @@ from openenv.core.env_server.interfaces import Environment
 try:
     from ..core.episode_store import record_report
     from ..evaluation.grading import grade_episode
+    from ..evaluation.rubrics import ChargebackOpsEpisodeRubric
     from ..core.models import (
         ActionTraceItem,
         CaseQueueItem,
@@ -26,6 +27,7 @@ try:
 except ImportError:  # pragma: no cover
     from core.episode_store import record_report
     from evaluation.grading import grade_episode
+    from evaluation.rubrics import ChargebackOpsEpisodeRubric
     from core.models import (
         ActionTraceItem,
         CaseQueueItem,
@@ -48,7 +50,7 @@ class ChargebackOpsEnvironment(
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
     def __init__(self):
-        super().__init__()
+        super().__init__(rubric=ChargebackOpsEpisodeRubric())
         self._task = get_task("goods_not_received_easy")
         self._selected_case_id: str | None = None
         self._last_action_result = "Environment initialized."
@@ -114,6 +116,7 @@ class ChargebackOpsEnvironment(
             objective=self._task.objective,
         )
         self._reset_task_state()
+        self._reset_rubric()
         return self._build_observation(reward=0.0, done=False)
 
     def step(

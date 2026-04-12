@@ -30,7 +30,7 @@ graph TB
     subgraph Core["Environment Core"]
         ENV["ChargebackOpsEnvironment\nstep() / reset() / state()"]
         SIM["Simulation Engine\nscenarios/simulation.py"]
-        GRD["Deterministic Grader\nevaluation/grading.py"]
+        GRD["OpenEnv Rubric Grader\nevaluation/rubrics.py"]
     end
 
     subgraph Tasks["Task Sources"]
@@ -51,6 +51,8 @@ graph TB
 ```
 
 ## Grading
+
+Each scoring dimension is a standalone `openenv.core.rubrics.Rubric` subclass. They compose into a per-case `WeightedSum` and an episode-level `ChargebackOpsEpisodeRubric` that the environment wires into `self.rubric`, so the whole grader is introspectable via `env.rubric.named_rubrics()`, hookable via `register_forward_hook`, and checkpointable via `state_dict()`. Swapping `NoteQualityRubric` for an `LLMJudge`, or wrapping any dimension in a `Gate`, is a one-line change.
 
 7-dimension deterministic grader, weighted per case by financial impact:
 
@@ -112,6 +114,19 @@ openenv validate .
 python -m runners.inference
 ```
 
+Inspect the rubric tree on a live environment:
+
+```python
+from server.chargeback_ops_environment import ChargebackOpsEnvironment
+env = ChargebackOpsEnvironment()
+for name, r in env.rubric.named_rubrics():
+    print(f"{name}: {type(r).__name__}")
+# case_rubric: CaseRubric
+# case_rubric.aggregator: WeightedSum
+# case_rubric.aggregator.rubric_0: StrategyCorrectnessRubric
+# ... (all 7 dimensions)
+```
+
 ```bash
 # Docker
 docker build -t chargebackops .
@@ -157,7 +172,7 @@ Entry point: [`inference.py`](inference.py). Fallback chain: primary provider ->
 ├── inference.py              # Submission entry point
 ├── openenv.yaml              # OpenEnv spec
 ├── core/                     # Models, client, episode store
-├── evaluation/               # 7-dimension grader, audit suite
+├── evaluation/               # OpenEnv Rubric subclasses + legacy grader adapters
 ├── runners/                  # Baseline agent, inference logic
 ├── scenarios/                # Tasks, generator, ISO adapter
 ├── server/                   # FastAPI app, environment, Gradio demo
