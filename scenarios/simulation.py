@@ -150,12 +150,19 @@ TASKS: dict[str, TaskScenario] = {
                     "For goods-not-received disputes, prove the merchandise was fulfilled to the billed customer with "
                     "order confirmation and carrier delivery evidence."
                 ),
-                policy_requirements=("order confirmation", "carrier delivery confirmation"),
+                policy_requirements=(
+                    "order confirmation",
+                    "carrier delivery confirmation",
+                ),
                 recommended_strategy="contest",
                 resolution_summary="Strong delivery proof exists. Contesting should recover the funds.",
                 weight=1.0,
                 required_evidence_ids=("E1-ORDER-CONF", "E1-DELIVERY-SCAN"),
-                helpful_evidence_ids=("E1-ORDER-CONF", "E1-DELIVERY-SCAN", "E1-SUPPORT-ACK"),
+                helpful_evidence_ids=(
+                    "E1-ORDER-CONF",
+                    "E1-DELIVERY-SCAN",
+                    "E1-SUPPORT-ACK",
+                ),
                 harmful_evidence_ids=(),
                 card_network="visa",
                 network_reason_code="13.1",
@@ -256,12 +263,19 @@ TASKS: dict[str, TaskScenario] = {
                     "For CNP fraud disputes, contest only when you can link the cardholder to the account or device history. "
                     "Do not attach evidence that strengthens the issuer's fraud narrative."
                 ),
-                policy_requirements=("prior good order linkage", "customer account confirmation"),
+                policy_requirements=(
+                    "prior good order linkage",
+                    "customer account confirmation",
+                ),
                 recommended_strategy="contest",
                 resolution_summary="Contest only with strong account-linkage evidence. Conceding is acceptable but suboptimal.",
                 weight=1.1,
                 required_evidence_ids=("M1-PRIOR-ORDERS", "M1-ACCOUNT-CHAT"),
-                helpful_evidence_ids=("M1-PRIOR-ORDERS", "M1-ACCOUNT-CHAT", "M1-DELIVERY"),
+                helpful_evidence_ids=(
+                    "M1-PRIOR-ORDERS",
+                    "M1-ACCOUNT-CHAT",
+                    "M1-DELIVERY",
+                ),
                 harmful_evidence_ids=("M1-AVS-MISMATCH", "M1-CVV-MISMATCH"),
                 card_network="visa",
                 network_reason_code="10.4",
@@ -375,12 +389,19 @@ TASKS: dict[str, TaskScenario] = {
                 policy_guidance=(
                     "Use merchant receipt plus carrier proof for goods-not-received disputes. This case is strong if contested on time."
                 ),
-                policy_requirements=("order confirmation", "signature-backed delivery proof"),
+                policy_requirements=(
+                    "order confirmation",
+                    "signature-backed delivery proof",
+                ),
                 recommended_strategy="contest",
                 resolution_summary="Contest immediately with the signature-backed delivery packet.",
                 weight=1.7,
                 required_evidence_ids=("H1-ORDER-CONF", "H1-SIGNATURE"),
-                helpful_evidence_ids=("H1-ORDER-CONF", "H1-SIGNATURE", "H1-DELIVERY-SCAN"),
+                helpful_evidence_ids=(
+                    "H1-ORDER-CONF",
+                    "H1-SIGNATURE",
+                    "H1-DELIVERY-SCAN",
+                ),
                 harmful_evidence_ids=(),
                 card_network="mastercard",
                 network_reason_code="4855",
@@ -553,7 +574,10 @@ TASKS: dict[str, TaskScenario] = {
                 policy_guidance=(
                     "If the merchant failed to process a promised credit, refund immediately or concede. Contesting is not supportable."
                 ),
-                policy_requirements=("proof of cancellation request", "refund status check"),
+                policy_requirements=(
+                    "proof of cancellation request",
+                    "refund status check",
+                ),
                 recommended_strategy="issue_refund",
                 resolution_summary="Refund immediately. Delay turns a manageable loss into a deadline miss.",
                 weight=1.2,
@@ -639,9 +663,15 @@ def get_task(task_id: str) -> TaskScenario:
         rows = load_iso_rows()
         if rows:
             import random as _rng_mod
+
             shuffled = list(rows)
             _rng_mod.Random(42).shuffle(shuffled)
-            task = build_iso_task(shuffled, difficulty=difficulty, start_index=task_index * 4, task_index=task_index)
+            task = build_iso_task(
+                shuffled,
+                difficulty=difficulty,
+                start_index=task_index * 4,
+                task_index=task_index,
+            )
             if task is not None:
                 return task
 
@@ -653,7 +683,9 @@ def get_task(task_id: str) -> TaskScenario:
         except ImportError:  # pragma: no cover
             from ..connectors.stripe_sandbox import fetch_disputes, build_stripe_task
         disputes = fetch_disputes(limit=10)
-        task = build_stripe_task(disputes, difficulty=m_stripe.group(1), task_index=int(m_stripe.group(2)))
+        task = build_stripe_task(
+            disputes, difficulty=m_stripe.group(1), task_index=int(m_stripe.group(2))
+        )
         if task is not None:
             return task
 
@@ -679,11 +711,14 @@ def list_tasks() -> list[TaskScenario]:
         from case_generator import generate_task
 
     # --- Showcase split (fixed, hand-crafted) ---
-    showcase = [TASKS[task_id] for task_id in [
-        "goods_not_received_easy",
-        "fraud_signal_ambiguity",
-        "queue_optimization_hard",
-    ]]
+    showcase = [
+        TASKS[task_id]
+        for task_id in [
+            "goods_not_received_easy",
+            "fraud_signal_ambiguity",
+            "queue_optimization_hard",
+        ]
+    ]
 
     # --- Generated holdout split (seeded, never used for tuning) ---
     holdout = [

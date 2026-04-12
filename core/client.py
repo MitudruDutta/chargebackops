@@ -9,7 +9,6 @@ from openenv.core.client_types import StepResult
 
 from .models import (
     ActionTraceItem,
-    BaselineRunResult,
     CaseQueueItem,
     CaseResolutionState,
     ChargebackOpsAction,
@@ -60,9 +59,13 @@ class ChargebackOpsEnv(
     def _step_payload(self, action: ChargebackOpsAction) -> dict[str, Any]:
         return action.model_dump()
 
-    def _parse_result(self, payload: dict[str, Any]) -> StepResult[ChargebackOpsObservation]:
+    def _parse_result(
+        self, payload: dict[str, Any]
+    ) -> StepResult[ChargebackOpsObservation]:
         obs_data = dict(payload.get("observation", {}))
-        obs_data["queue"] = [CaseQueueItem(**item) for item in obs_data.get("queue", [])]
+        obs_data["queue"] = [
+            CaseQueueItem(**item) for item in obs_data.get("queue", [])
+        ]
         obs_data["visible_case"] = _parse_visible_case(obs_data.get("visible_case"))
         obs_data["grader_report"] = _parse_grader(obs_data.get("grader_report"))
         observation = ChargebackOpsObservation(

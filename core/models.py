@@ -186,7 +186,9 @@ class ChargebackOpsAction(Action):
     """Action schema for ChargebackOps."""
 
     action_type: ActionType
-    case_id: str | None = Field(default=None, max_length=64, description="Target case id when applicable")
+    case_id: str | None = Field(
+        default=None, max_length=64, description="Target case id when applicable"
+    )
     system_name: SystemName | None = Field(
         default=None,
         description="System to query when action_type is query_system",

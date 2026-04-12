@@ -25,7 +25,6 @@ try:
         InternalEvidence,
         TaskScenario,
         SystemName,
-        StrategyName,
     )
 except ImportError:  # pragma: no cover
     from scenarios.simulation import (
@@ -33,7 +32,6 @@ except ImportError:  # pragma: no cover
         InternalEvidence,
         TaskScenario,
         SystemName,
-        StrategyName,
     )
 
 _STRIPE_REASON_MAP: dict[str, str] = {
@@ -71,22 +69,40 @@ _POLICY_GUIDANCE: dict[str, str] = {
 _POLICY_REQS: dict[str, tuple[str, ...]] = {
     "goods_not_received": ("order confirmation", "carrier delivery confirmation"),
     "fraud_cnp": ("prior good order linkage", "customer account confirmation"),
-    "product_not_as_described": ("product listing verification", "return policy documentation"),
+    "product_not_as_described": (
+        "product listing verification",
+        "return policy documentation",
+    ),
     "service_not_provided": ("service completion record", "customer acknowledgment"),
     "credit_not_processed": ("proof of cancellation request", "refund status check"),
     "duplicate_processing": ("payment transaction log", "duplicate confirmation"),
 }
 
 
-def _ev(eid: str, system: SystemName, title: str, summary: str,
-        *, helpful: bool = False, harmful: bool = False, required: bool = False) -> InternalEvidence:
+def _ev(
+    eid: str,
+    system: SystemName,
+    title: str,
+    summary: str,
+    *,
+    helpful: bool = False,
+    harmful: bool = False,
+    required: bool = False,
+) -> InternalEvidence:
     return InternalEvidence(
-        evidence_id=eid, source_system=system, title=title,
-        summary=summary, helpful=helpful, harmful=harmful, required=required,
+        evidence_id=eid,
+        source_system=system,
+        title=title,
+        summary=summary,
+        helpful=helpful,
+        harmful=harmful,
+        required=required,
     )
 
 
-def _infer_strategy(reason_code: str, stripe_status: str) -> tuple[str, tuple[str, ...]]:
+def _infer_strategy(
+    reason_code: str, stripe_status: str
+) -> tuple[str, tuple[str, ...]]:
     """Infer optimal strategy from Stripe dispute status."""
     # These reason codes should always refund — contesting is never supportable.
     if reason_code in ("credit_not_processed", "duplicate_processing"):
@@ -106,7 +122,12 @@ def _build_evidence(
     metadata: dict[str, Any],
     optimal: str,
     rng: random.Random,
-) -> tuple[dict[SystemName, tuple[InternalEvidence, ...]], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+) -> tuple[
+    dict[SystemName, tuple[InternalEvidence, ...]],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+]:
     by_sys: dict[SystemName, list[InternalEvidence]] = {
         s: [] for s in ("orders", "payment", "shipping", "support", "refunds", "risk")
     }
@@ -117,63 +138,228 @@ def _build_evidence(
     desc = metadata.get("description", f"Stripe dispute for {amount} {currency}")
 
     if reason_code == "goods_not_received":
-        e = _ev(f"{prefix}-ORDER", "orders", "Order confirmation", f"Order for {amount} {currency}.", helpful=True, required=True)
-        by_sys["orders"].append(e); req.append(e.evidence_id); hlp.append(e.evidence_id)
-        by_sys["payment"].append(_ev(f"{prefix}-AUTH", "payment", "Payment capture", "Stripe charge captured."))
+        e = _ev(
+            f"{prefix}-ORDER",
+            "orders",
+            "Order confirmation",
+            f"Order for {amount} {currency}.",
+            helpful=True,
+            required=True,
+        )
+        by_sys["orders"].append(e)
+        req.append(e.evidence_id)
+        hlp.append(e.evidence_id)
+        by_sys["payment"].append(
+            _ev(
+                f"{prefix}-AUTH",
+                "payment",
+                "Payment capture",
+                "Stripe charge captured.",
+            )
+        )
         if optimal == "contest":
-            e = _ev(f"{prefix}-DELIVERY", "shipping", "Delivery confirmation", "Carrier confirms delivery.", helpful=True, required=True)
-            by_sys["shipping"].append(e); req.append(e.evidence_id); hlp.append(e.evidence_id)
+            e = _ev(
+                f"{prefix}-DELIVERY",
+                "shipping",
+                "Delivery confirmation",
+                "Carrier confirms delivery.",
+                helpful=True,
+                required=True,
+            )
+            by_sys["shipping"].append(e)
+            req.append(e.evidence_id)
+            hlp.append(e.evidence_id)
         else:
-            by_sys["shipping"].append(_ev(f"{prefix}-NOTRACK", "shipping", "Tracking", "No delivery confirmation."))
-        by_sys["refunds"].append(_ev(f"{prefix}-REFUND", "refunds", "Refund ledger", "No refund issued."))
+            by_sys["shipping"].append(
+                _ev(
+                    f"{prefix}-NOTRACK",
+                    "shipping",
+                    "Tracking",
+                    "No delivery confirmation.",
+                )
+            )
+        by_sys["refunds"].append(
+            _ev(f"{prefix}-REFUND", "refunds", "Refund ledger", "No refund issued.")
+        )
 
     elif reason_code == "fraud_cnp":
-        by_sys["orders"].append(_ev(f"{prefix}-ORDER", "orders", "Order receipt", f"Order for {amount} {currency}.", helpful=True))
+        by_sys["orders"].append(
+            _ev(
+                f"{prefix}-ORDER",
+                "orders",
+                "Order receipt",
+                f"Order for {amount} {currency}.",
+                helpful=True,
+            )
+        )
         hlp.append(f"{prefix}-ORDER")
-        e_avs = _ev(f"{prefix}-AVS", "payment", "AVS check", "AVS mismatch at authorization.", harmful=True)
-        by_sys["payment"].append(e_avs); hrm.append(e_avs.evidence_id)
-        by_sys["payment"].append(_ev(f"{prefix}-AUTH", "payment", "Payment capture", "Stripe charge captured."))
+        e_avs = _ev(
+            f"{prefix}-AVS",
+            "payment",
+            "AVS check",
+            "AVS mismatch at authorization.",
+            harmful=True,
+        )
+        by_sys["payment"].append(e_avs)
+        hrm.append(e_avs.evidence_id)
+        by_sys["payment"].append(
+            _ev(
+                f"{prefix}-AUTH",
+                "payment",
+                "Payment capture",
+                "Stripe charge captured.",
+            )
+        )
         if optimal == "contest":
-            e = _ev(f"{prefix}-PRIOR", "risk", "Prior account activity", "Same account with prior fulfilled orders.", helpful=True, required=True)
-            by_sys["risk"].append(e); req.append(e.evidence_id); hlp.append(e.evidence_id)
-            e = _ev(f"{prefix}-CHAT", "support", "Customer verification", "Customer confirmed order via support.", helpful=True, required=True)
-            by_sys["support"].append(e); req.append(e.evidence_id); hlp.append(e.evidence_id)
+            e = _ev(
+                f"{prefix}-PRIOR",
+                "risk",
+                "Prior account activity",
+                "Same account with prior fulfilled orders.",
+                helpful=True,
+                required=True,
+            )
+            by_sys["risk"].append(e)
+            req.append(e.evidence_id)
+            hlp.append(e.evidence_id)
+            e = _ev(
+                f"{prefix}-CHAT",
+                "support",
+                "Customer verification",
+                "Customer confirmed order via support.",
+                helpful=True,
+                required=True,
+            )
+            by_sys["support"].append(e)
+            req.append(e.evidence_id)
+            hlp.append(e.evidence_id)
         else:
-            by_sys["risk"].append(_ev(f"{prefix}-RISK", "risk", "Risk summary", "No positive account history."))
-        by_sys["refunds"].append(_ev(f"{prefix}-REFUND", "refunds", "Refund ledger", "No refund issued."))
+            by_sys["risk"].append(
+                _ev(
+                    f"{prefix}-RISK",
+                    "risk",
+                    "Risk summary",
+                    "No positive account history.",
+                )
+            )
+        by_sys["refunds"].append(
+            _ev(f"{prefix}-REFUND", "refunds", "Refund ledger", "No refund issued.")
+        )
 
     elif reason_code == "product_not_as_described":
-        e = _ev(f"{prefix}-ORDER", "orders", "Order details", f"Order for {amount} {currency} — SKU matches.", helpful=True, required=True)
-        by_sys["orders"].append(e); req.append(e.evidence_id); hlp.append(e.evidence_id)
-        e = _ev(f"{prefix}-LISTING", "orders", "Product listing", "Listing matches manufacturer specs.", helpful=True, required=True)
-        by_sys["orders"].append(e); req.append(e.evidence_id); hlp.append(e.evidence_id)
-        by_sys["payment"].append(_ev(f"{prefix}-AUTH", "payment", "Payment capture", "Settled at listed price."))
-        by_sys["shipping"].append(_ev(f"{prefix}-DELIVERY", "shipping", "Delivery confirmation", "Delivered.", helpful=True))
+        e = _ev(
+            f"{prefix}-ORDER",
+            "orders",
+            "Order details",
+            f"Order for {amount} {currency} — SKU matches.",
+            helpful=True,
+            required=True,
+        )
+        by_sys["orders"].append(e)
+        req.append(e.evidence_id)
+        hlp.append(e.evidence_id)
+        e = _ev(
+            f"{prefix}-LISTING",
+            "orders",
+            "Product listing",
+            "Listing matches manufacturer specs.",
+            helpful=True,
+            required=True,
+        )
+        by_sys["orders"].append(e)
+        req.append(e.evidence_id)
+        hlp.append(e.evidence_id)
+        by_sys["payment"].append(
+            _ev(
+                f"{prefix}-AUTH",
+                "payment",
+                "Payment capture",
+                "Settled at listed price.",
+            )
+        )
+        by_sys["shipping"].append(
+            _ev(
+                f"{prefix}-DELIVERY",
+                "shipping",
+                "Delivery confirmation",
+                "Delivered.",
+                helpful=True,
+            )
+        )
         hlp.append(f"{prefix}-DELIVERY")
-        by_sys["refunds"].append(_ev(f"{prefix}-REFUND", "refunds", "Refund ledger", "No refund processed."))
+        by_sys["refunds"].append(
+            _ev(f"{prefix}-REFUND", "refunds", "Refund ledger", "No refund processed.")
+        )
 
     elif reason_code == "service_not_provided":
-        e = _ev(f"{prefix}-BOOKING", "orders", "Service booking", f"Booking for {amount} {currency}.", helpful=True, required=True)
-        by_sys["orders"].append(e); req.append(e.evidence_id); hlp.append(e.evidence_id)
-        by_sys["payment"].append(_ev(f"{prefix}-AUTH", "payment", "Payment record", "Stripe charge captured."))
+        e = _ev(
+            f"{prefix}-BOOKING",
+            "orders",
+            "Service booking",
+            f"Booking for {amount} {currency}.",
+            helpful=True,
+            required=True,
+        )
+        by_sys["orders"].append(e)
+        req.append(e.evidence_id)
+        hlp.append(e.evidence_id)
+        by_sys["payment"].append(
+            _ev(
+                f"{prefix}-AUTH", "payment", "Payment record", "Stripe charge captured."
+            )
+        )
         if optimal == "contest":
-            e = _ev(f"{prefix}-COMPLETION", "support", "Service completion", "Service marked completed.", helpful=True, required=True)
-            by_sys["support"].append(e); req.append(e.evidence_id); hlp.append(e.evidence_id)
-        by_sys["refunds"].append(_ev(f"{prefix}-REFUND", "refunds", "Refund ledger", "No refund issued."))
+            e = _ev(
+                f"{prefix}-COMPLETION",
+                "support",
+                "Service completion",
+                "Service marked completed.",
+                helpful=True,
+                required=True,
+            )
+            by_sys["support"].append(e)
+            req.append(e.evidence_id)
+            hlp.append(e.evidence_id)
+        by_sys["refunds"].append(
+            _ev(f"{prefix}-REFUND", "refunds", "Refund ledger", "No refund issued.")
+        )
 
     elif reason_code in ("credit_not_processed", "duplicate_processing"):
-        by_sys["orders"].append(_ev(f"{prefix}-ORDER", "orders", "Invoice", f"Charge of {amount} {currency}."))
-        by_sys["payment"].append(_ev(f"{prefix}-PAYMENT", "payment", "Payment", "Stripe charge settled."))
-        by_sys["support"].append(_ev(f"{prefix}-REQ", "support", "Customer request", desc[:100], helpful=True))
+        by_sys["orders"].append(
+            _ev(
+                f"{prefix}-ORDER",
+                "orders",
+                "Invoice",
+                f"Charge of {amount} {currency}.",
+            )
+        )
+        by_sys["payment"].append(
+            _ev(f"{prefix}-PAYMENT", "payment", "Payment", "Stripe charge settled.")
+        )
+        by_sys["support"].append(
+            _ev(
+                f"{prefix}-REQ", "support", "Customer request", desc[:100], helpful=True
+            )
+        )
         hlp.append(f"{prefix}-REQ")
-        by_sys["refunds"].append(_ev(f"{prefix}-NOREFUND", "refunds", "Refund ledger", "No refund processed.", helpful=True))
+        by_sys["refunds"].append(
+            _ev(
+                f"{prefix}-NOREFUND",
+                "refunds",
+                "Refund ledger",
+                "No refund processed.",
+                helpful=True,
+            )
+        )
         hlp.append(f"{prefix}-NOREFUND")
 
     frozen = {k: tuple(v) for k, v in by_sys.items()}
     return frozen, tuple(req), tuple(hlp), tuple(hrm)
 
 
-def dispute_to_case(dispute: dict[str, Any], case_index: int, *, deadline_step: int = 8) -> InternalCase | None:
+def dispute_to_case(
+    dispute: dict[str, Any], case_index: int, *, deadline_step: int = 8
+) -> InternalCase | None:
     """Convert a Stripe dispute object to an InternalCase."""
     stripe_reason = dispute.get("reason", "general")
     reason_code = _STRIPE_REASON_MAP.get(stripe_reason)
@@ -191,11 +377,20 @@ def dispute_to_case(dispute: dict[str, Any], case_index: int, *, deadline_step: 
     prefix = f"STRIPE{case_index}"
 
     evidence, req_ids, hlp_ids, hrm_ids = _build_evidence(
-        prefix, reason_code, amount, currency, metadata, optimal, rng,
+        prefix,
+        reason_code,
+        amount,
+        currency,
+        metadata,
+        optimal,
+        rng,
     )
 
     guidance = _POLICY_GUIDANCE.get(reason_code, "")
-    if optimal in ("accept_chargeback", "issue_refund") and reason_code not in ("credit_not_processed", "duplicate_processing"):
+    if optimal in ("accept_chargeback", "issue_refund") and reason_code not in (
+        "credit_not_processed",
+        "duplicate_processing",
+    ):
         guidance = f"Do not contest this {reason_code.replace('_', ' ')} dispute. Concede to avoid wasting resources."
 
     # Stripe disputes come from any network; default to visa
@@ -204,8 +399,18 @@ def dispute_to_case(dispute: dict[str, Any], case_index: int, *, deadline_step: 
         "fraud_cnp": ("visa", "10.4", 30, "CE 3.6 — Fraud, Card-Absent Environment"),
         "credit_not_processed": ("visa", "13.6", 30, "CE 3.4 — Credit Not Processed"),
         "duplicate_processing": ("visa", "12.4", 30, "CE 3.3 — Duplicate Processing"),
-        "product_not_as_described": ("visa", "13.3", 30, "CE 3.5 — Not as Described or Defective"),
-        "service_not_provided": ("visa", "13.1", 30, "CE 3.5 — Merchandise/Services Not Received"),
+        "product_not_as_described": (
+            "visa",
+            "13.3",
+            30,
+            "CE 3.5 — Not as Described or Defective",
+        ),
+        "service_not_provided": (
+            "visa",
+            "13.1",
+            30,
+            "CE 3.5 — Merchandise/Services Not Received",
+        ),
     }
     net_info = _STRIPE_NETWORK_MAP.get(reason_code, ("visa", "13.1", 30, ""))
 
@@ -216,7 +421,9 @@ def dispute_to_case(dispute: dict[str, Any], case_index: int, *, deadline_step: 
         amount=amount,
         currency=currency,
         reason_code=reason_code,
-        summary=dispute.get("evidence_details", {}).get("due_by_reason", f"Stripe dispute: {stripe_reason}"),
+        summary=dispute.get("evidence_details", {}).get(
+            "due_by_reason", f"Stripe dispute: {stripe_reason}"
+        ),
         inspection_notes=f"Stripe dispute {dispute_id} — {stripe_reason}. Status: {status}.",
         deadline_step=deadline_step,
         optimal_strategy=optimal,
@@ -245,7 +452,9 @@ def build_stripe_task(
 ) -> TaskScenario | None:
     """Build a TaskScenario from a list of Stripe dispute objects."""
     case_count = {"easy": 1, "medium": 2, "hard": 3}.get(difficulty, 2)
-    max_steps = {"easy": 10, "medium": 12, "hard": max(12, case_count * 5)}.get(difficulty, 12)
+    max_steps = {"easy": 10, "medium": 12, "hard": max(12, case_count * 5)}.get(
+        difficulty, 12
+    )
     deadline = {"easy": 8, "medium": 7, "hard": 5}.get(difficulty, 7)
 
     cases: list[InternalCase] = []
@@ -271,7 +480,9 @@ def build_stripe_task(
     )
 
 
-def fetch_disputes(*, limit: int = 10, api_key: str | None = None) -> list[dict[str, Any]]:
+def fetch_disputes(
+    *, limit: int = 10, api_key: str | None = None
+) -> list[dict[str, Any]]:
     """Fetch disputes from Stripe test mode.
 
     Requires ``stripe`` package and a test-mode API key.
@@ -283,6 +494,7 @@ def fetch_disputes(*, limit: int = 10, api_key: str | None = None) -> list[dict[
 
     try:
         import stripe
+
         stripe.api_key = key
         result = stripe.Dispute.list(limit=limit)
         return [d.to_dict() if hasattr(d, "to_dict") else dict(d) for d in result.data]
@@ -301,15 +513,17 @@ def _synthetic_test_disputes(count: int) -> list[dict[str, Any]]:
         reason = rng.choice(reasons)
         status = rng.choice(statuses)
         amount = rng.randint(500, 50000)  # cents
-        disputes.append({
-            "id": f"dp_test_{i:04d}",
-            "amount": amount,
-            "currency": "usd",
-            "reason": reason,
-            "status": status,
-            "charge": f"ch_test_{i:04d}",
-            "metadata": {"description": f"Test dispute {i} — {reason}"},
-            "evidence_details": {"due_by_reason": f"Dispute for {reason}"},
-        })
+        disputes.append(
+            {
+                "id": f"dp_test_{i:04d}",
+                "amount": amount,
+                "currency": "usd",
+                "reason": reason,
+                "status": status,
+                "charge": f"ch_test_{i:04d}",
+                "metadata": {"description": f"Test dispute {i} — {reason}"},
+                "evidence_details": {"due_by_reason": f"Dispute for {reason}"},
+            }
+        )
 
     return disputes

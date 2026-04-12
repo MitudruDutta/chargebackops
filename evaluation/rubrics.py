@@ -93,7 +93,9 @@ class EvidenceQualityRubric(Rubric):
             if not _contest_is_valid(case):
                 return 0.0
             base = 0.7 * _ratio(required_attached, len(case.required_evidence_ids))
-            bonus = 0.3 * _ratio(helpful_attached, max(1, len(case.helpful_evidence_ids)))
+            bonus = 0.3 * _ratio(
+                helpful_attached, max(1, len(case.helpful_evidence_ids))
+            )
             penalty = 0.25 * harmful_attached
             return max(0.0, min(1.0, base + bonus - penalty))
 
@@ -173,14 +175,20 @@ class EfficiencyRubric(Rubric):
         )
 
         # Over-querying a concedable case is wasted exploration.
-        if final in {"accept_chargeback", "issue_refund"} and case.optimal_strategy != "contest":
+        if (
+            final in {"accept_chargeback", "issue_refund"}
+            and case.optimal_strategy != "contest"
+        ):
             systems_queried = len(progress.revealed_systems)
             if systems_queried > 2:
                 efficiency -= 0.15 * (systems_queried - 2)
 
         # Retrieving policy after the decision was already made is wasted.
         if progress.policy_retrieved and progress.resolved_at_step is not None:
-            if final in {"accept_chargeback", "issue_refund"} and case.optimal_strategy in {
+            if final in {
+                "accept_chargeback",
+                "issue_refund",
+            } and case.optimal_strategy in {
                 "accept_chargeback",
                 "issue_refund",
             }:
@@ -266,7 +274,11 @@ def grade_representment_note(
         1
         for eid in attached_ids
         if eid.lower() in text
-        or any(part in text for part in eid.lower().replace("-", " ").split() if len(part) > 3)
+        or any(
+            part in text
+            for part in eid.lower().replace("-", " ").split()
+            if len(part) > 3
+        )
     )
     if evidence_refs > 0:
         score += 0.15
@@ -280,7 +292,17 @@ def grade_representment_note(
                     clean = word.strip(".,;:()")
                     if len(clean) > 3:
                         harmful_terms.add(clean)
-    harmful_terms -= {"was", "the", "and", "for", "that", "with", "from", "time", "detail"}
+    harmful_terms -= {
+        "was",
+        "the",
+        "and",
+        "for",
+        "that",
+        "with",
+        "from",
+        "time",
+        "detail",
+    }
     harmful_hits = sum(1 for term in harmful_terms if term in text)
     if harmful_hits > 0:
         score -= 0.12 * min(harmful_hits, 3)
@@ -327,7 +349,9 @@ class CaseRubric(Rubric):
 
         scores: dict[str, float] = {}
         for name, child in zip(CASE_DIMENSION_NAMES, self.aggregator._rubric_list):
-            scores[name] = float(child.last_score) if child.last_score is not None else 0.0
+            scores[name] = (
+                float(child.last_score) if child.last_score is not None else 0.0
+            )
         return scores
 
 

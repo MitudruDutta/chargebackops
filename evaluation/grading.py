@@ -40,7 +40,9 @@ _CASE_RUBRIC = CaseRubric()
 _EPISODE_RUBRIC = ChargebackOpsEpisodeRubric()
 
 
-def _build_case_notes(case: InternalCase, progress: CaseProgress, step_count: int) -> str:
+def _build_case_notes(
+    case: InternalCase, progress: CaseProgress, step_count: int
+) -> str:
     final_resolution = progress.final_resolution or "unresolved"
     attached_set = set(progress.attached_evidence_ids)
     harmful_attached = len(attached_set.intersection(case.harmful_evidence_ids))
@@ -94,7 +96,6 @@ def grade_episode(
         score_case(case, progress_by_case[case.case_id], step_count)
         for case in task.cases
     ]
-    total_weight = sum(case.weight for case in task.cases)
     total_score = sum(report.weighted_score for report in case_reports)
 
     ctx = EpisodeGradingContext(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
@@ -11,13 +10,21 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 import gradio as gr
 
 try:
-    from ..core.models import ChargebackOpsAction
-    from ..runners.baseline_runner import _heuristic_pick, _obvious_next_action, candidate_actions
+    from ..evaluation.agent_brutal_audit import _bad_policy_action
+    from ..runners.baseline_runner import (
+        _heuristic_pick,
+        _obvious_next_action,
+        candidate_actions,
+    )
     from ..scenarios.simulation import list_tasks
     from .chargeback_ops_environment import ChargebackOpsEnvironment
 except ImportError:  # pragma: no cover
-    from core.models import ChargebackOpsAction
-    from runners.baseline_runner import _heuristic_pick, _obvious_next_action, candidate_actions
+    from evaluation.agent_brutal_audit import _bad_policy_action
+    from runners.baseline_runner import (
+        _heuristic_pick,
+        _obvious_next_action,
+        candidate_actions,
+    )
     from scenarios.simulation import list_tasks
     from server.chargeback_ops_environment import ChargebackOpsEnvironment
 
@@ -74,6 +81,7 @@ _CSS = """
 # HTML builders
 # ---------------------------------------------------------------------------
 
+
 def _bar_html(label: str, value: float, color: str) -> str:
     pct = max(0, min(100, int(value * 100)))
     return (
@@ -81,7 +89,7 @@ def _bar_html(label: str, value: float, color: str) -> str:
         f'<span class="bar-label">{label}</span>'
         f'<div class="bar-track"><div class="bar-fill" style="width:{pct}%;background:{color};"></div></div>'
         f'<span class="bar-value">{value:.2f}</span>'
-        f'</div>'
+        f"</div>"
     )
 
 
@@ -121,7 +129,7 @@ def _queue_html(observation) -> str:
             f"<tr>"
             f"<td><b>{c.case_id}</b></td>"
             f"<td>{net}</td>"
-            f"<td>{c.reason_code.replace('_',' ')}</td>"
+            f"<td>{c.reason_code.replace('_', ' ')}</td>"
             f"<td style='text-align:right;'>${c.amount:,.2f}</td>"
             f'<td class="{urg_cls}" style="text-align:center;">{urg_icon} {sl}</td>'
             f'<td class="{st_cls}" style="text-align:center;">{st_label}</td>'
@@ -179,7 +187,7 @@ def _grader_html(report: dict | None) -> str:
         f'<div class="score-big">'
         f'<div class="value" style="color:{sc};">{score:.3f}</div>'
         f'<div class="label">{summary}</div>'
-        f'</div>'
+        f"</div>"
     )
 
     dims = [
@@ -210,9 +218,9 @@ def _grader_html(report: dict | None) -> str:
             f'<div class="case-header">'
             f'<span class="case-id">{cid}</span>'
             f'<span class="case-meta">{res} &middot; weighted {ws:.3f}</span>'
-            f'</div>'
-            f'{bars}{notes_html}'
-            f'</div>'
+            f"</div>"
+            f"{bars}{notes_html}"
+            f"</div>"
         )
 
     return html
@@ -222,23 +230,29 @@ def _grader_html(report: dict | None) -> str:
 # Episode runner (generator — yields per step)
 # ---------------------------------------------------------------------------
 
+
 def _resolve_task_id(task_id: str, generated: bool, difficulty: str, seed: int) -> str:
     if generated:
         return f"generated_{difficulty}_s{seed}"
     return task_id
 
 
-def run_episode(task_id: str, generated: bool, difficulty: str, seed: int):
+def run_episode(
+    task_id: str, generated: bool, difficulty: str, seed: int, policy: str = "heuristic"
+):
     tid = _resolve_task_id(task_id, generated, difficulty, int(seed))
     env = ChargebackOpsEnvironment()
     obs = env.reset(task_id=tid, difficulty=difficulty, seed=int(seed))
     max_steps = obs.info.get("current_task_max_steps", 10)
     rows: list[list[Any]] = []
 
+    policy_label = (
+        "Heuristic" if policy == "heuristic" else "Naive (concede-everything)"
+    )
     header = (
         f"### {obs.task_title}\n"
         f"`{obs.task_id}` &mdash; {len(obs.queue)} case(s), "
-        f"{max_steps} steps, **{obs.difficulty}**"
+        f"{max_steps} steps, **{obs.difficulty}** &middot; policy: **{policy_label}**"
     )
     yield (
         header,
@@ -251,30 +265,37 @@ def run_episode(task_id: str, generated: bool, difficulty: str, seed: int):
 
     step = 0
     while not obs.done:
-        payload = obs.model_dump()
-        cands = candidate_actions(payload)
-        if not cands:
-            break
-        pick = _obvious_next_action(payload, cands) or _heuristic_pick(cands)
+        if policy == "bad":
+            action = _bad_policy_action(obs)
+            summary_action = action
+        else:
+            payload = obs.model_dump()
+            cands = candidate_actions(payload)
+            if not cands:
+                break
+            pick = _obvious_next_action(payload, cands) or _heuristic_pick(cands)
+            action = pick.action
+            summary_action = pick.action
         step += 1
-        obs = env.step(pick.action)
-        rows.append([
-            step,
-            pick.action.action_type,
-            pick.action.case_id or obs.selected_case_id or "",
-            pick.action.system_name or "",
-            pick.action.strategy or "",
-            round(obs.reward or 0.0, 4),
-            obs.last_action_result,
-        ])
+        obs = env.step(action)
+        rows.append(
+            [
+                step,
+                summary_action.action_type,
+                summary_action.case_id or obs.selected_case_id or "",
+                summary_action.system_name or "",
+                summary_action.strategy or "",
+                round(obs.reward or 0.0, 4),
+                obs.last_action_result,
+            ]
+        )
 
         status_md = (
-            f"**Step {step}** &mdash; `{pick.action.action_type}` "
-            f"&rarr; reward **{round(obs.reward or 0.0, 4)}**"
+            f"**Step {step}** &mdash; `{summary_action.action_type}` "
+            f"&rarr; reward **{round(obs.reward or 0.0, 4)}** &middot; policy: **{policy_label}**"
         )
         grader = (
-            _grader_html(obs.grader_report.model_dump())
-            if obs.grader_report else ""
+            _grader_html(obs.grader_report.model_dump()) if obs.grader_report else ""
         )
         yield (
             status_md,
@@ -302,13 +323,13 @@ def run_episode(task_id: str, generated: bool, difficulty: str, seed: int):
 # Build Gradio app
 # ---------------------------------------------------------------------------
 
+
 def build_demo() -> gr.Blocks:
     tasks = list_tasks()
     task_ids = [t.task_id for t in tasks]
     default = task_ids[0] if task_ids else "goods_not_received_easy"
 
     with gr.Blocks(title="ChargebackOps") as demo:
-
         # Inject CSS (Gradio 6 moved css= to launch(); <style> tag works everywhere)
         gr.HTML(f"<style>{_CSS}</style>")
 
@@ -321,20 +342,36 @@ def build_demo() -> gr.Blocks:
         )
 
         with gr.Tabs():
-
             # ── Tab 1: Run Episode ────────────────────────────────
             with gr.Tab("Run Episode"):
                 with gr.Row():
-                    dd_task = gr.Dropdown(label="Task", choices=task_ids, value=default, scale=3)
+                    dd_task = gr.Dropdown(
+                        label="Task", choices=task_ids, value=default, scale=3
+                    )
                     cb_gen = gr.Checkbox(label="Generated", value=False, scale=1)
                     rd_diff = gr.Radio(
                         ["easy", "medium", "hard", "nightmare"],
-                        label="Difficulty", value="easy", scale=2,
+                        label="Difficulty",
+                        value="easy",
+                        scale=2,
                     )
                     nb_seed = gr.Number(label="Seed", value=42, precision=0, scale=1)
-                    btn_run = gr.Button("Run", variant="primary", scale=1)
+                with gr.Row():
+                    rd_policy = gr.Radio(
+                        choices=[
+                            ("Heuristic (smart baseline)", "heuristic"),
+                            ("Naive (always concede)", "bad"),
+                        ],
+                        value="heuristic",
+                        label="Policy",
+                        scale=4,
+                    )
+                    btn_run = gr.Button("Run Episode", variant="primary", scale=1)
 
-                md_status = gr.Markdown("Pick a task and click **Run**.")
+                md_status = gr.Markdown(
+                    "Pick a task + policy and click **Run Episode**. Compare **Heuristic** vs "
+                    "**Naive** to see how the 7-dimension rubric separates a real agent from a lazy one."
+                )
 
                 with gr.Row(equal_height=True):
                     with gr.Column(scale=3):
@@ -343,7 +380,15 @@ def build_demo() -> gr.Blocks:
                         html_budget = gr.HTML(label="Budget")
 
                 df_trace = gr.Dataframe(
-                    headers=["#", "Action", "Case", "System", "Strategy", "Reward", "Result"],
+                    headers=[
+                        "#",
+                        "Action",
+                        "Case",
+                        "System",
+                        "Strategy",
+                        "Reward",
+                        "Result",
+                    ],
                     datatype=["number", "str", "str", "str", "str", "number", "str"],
                     interactive=False,
                     wrap=True,
@@ -355,23 +400,49 @@ def build_demo() -> gr.Blocks:
 
                 btn_run.click(
                     fn=run_episode,
-                    inputs=[dd_task, cb_gen, rd_diff, nb_seed],
-                    outputs=[md_status, html_queue, html_budget, df_trace, html_grader, json_raw],
+                    inputs=[dd_task, cb_gen, rd_diff, nb_seed, rd_policy],
+                    outputs=[
+                        md_status,
+                        html_queue,
+                        html_budget,
+                        df_trace,
+                        html_grader,
+                        json_raw,
+                    ],
                 )
 
             # ── Tab 2: Task Catalog ───────────────────────────────
             with gr.Tab("Task Catalog"):
                 catalog_rows = []
                 for t in tasks:
-                    nets = sorted({f"{c.card_network.upper()} {c.network_reason_code}" for c in t.cases})
-                    catalog_rows.append([
-                        t.task_id, t.title, t.difficulty,
-                        len(t.cases), t.max_steps,
-                        ", ".join(nets), t.objective,
-                    ])
+                    nets = sorted(
+                        {
+                            f"{c.card_network.upper()} {c.network_reason_code}"
+                            for c in t.cases
+                        }
+                    )
+                    catalog_rows.append(
+                        [
+                            t.task_id,
+                            t.title,
+                            t.difficulty,
+                            len(t.cases),
+                            t.max_steps,
+                            ", ".join(nets),
+                            t.objective,
+                        ]
+                    )
                 gr.Dataframe(
                     value=catalog_rows,
-                    headers=["Task ID", "Title", "Difficulty", "Cases", "Steps", "Networks", "Objective"],
+                    headers=[
+                        "Task ID",
+                        "Title",
+                        "Difficulty",
+                        "Cases",
+                        "Steps",
+                        "Networks",
+                        "Objective",
+                    ],
                     interactive=False,
                     wrap=True,
                     label="10-Task Benchmark Catalog",

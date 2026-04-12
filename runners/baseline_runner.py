@@ -73,7 +73,12 @@ def _provider_retry_backoff_seconds() -> float:
 
 
 def _strict_llm_mode() -> bool:
-    return os.getenv("STRICT_LLM_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("STRICT_LLM_MODE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _should_retry_provider_error(exc: Exception) -> bool:
@@ -166,7 +171,9 @@ _NOTE_TEMPLATES: dict[str, str] = {
 def _build_representment_note(visible_case: dict[str, Any]) -> str:
     """Generate a representment note summarizing the dispute contest rationale."""
     reason = visible_case.get("reason_code", "")
-    base = _NOTE_TEMPLATES.get(reason, f"Contesting {reason.replace('_', ' ')} dispute with attached evidence.")
+    base = _NOTE_TEMPLATES.get(
+        reason, f"Contesting {reason.replace('_', ' ')} dispute with attached evidence."
+    )
 
     # Inject policy requirement keywords directly for claims coverage scoring.
     policy = visible_case.get("policy")
@@ -200,9 +207,21 @@ def _visible_case_deadline(queue: list[dict[str, Any]], case_id: str) -> int:
 
 
 _NEGATIVE_SIGNAL_KEYWORDS = {
-    "mismatch", "failed", "declined", "suspicious", "flagged", "fraud risk",
-    "unauthorized", "rejected", "invalid", "expired", "violation",
-    "non-compliant", "discrepancy", "inconsistent", "unverified",
+    "mismatch",
+    "failed",
+    "declined",
+    "suspicious",
+    "flagged",
+    "fraud risk",
+    "unauthorized",
+    "rejected",
+    "invalid",
+    "expired",
+    "violation",
+    "non-compliant",
+    "discrepancy",
+    "inconsistent",
+    "unverified",
 }
 
 
@@ -237,7 +256,9 @@ def _rank_attachable(item: dict[str, Any]) -> int:
     return 4
 
 
-def _batch_attachable_ids(retrieved_items: list[dict[str, Any]], attached_ids: set[str]) -> list[str]:
+def _batch_attachable_ids(
+    retrieved_items: list[dict[str, Any]], attached_ids: set[str]
+) -> list[str]:
     filtered = [
         item
         for item in retrieved_items
@@ -256,24 +277,34 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
     candidates: list[CandidateAction] = []
 
     # Step cost estimates per reason code (select_case + full workflow).
-    _FAST_REASON_CODES = {"goods_not_received", "credit_not_processed", "duplicate_processing"}
+    _FAST_REASON_CODES = {
+        "goods_not_received",
+        "credit_not_processed",
+        "duplicate_processing",
+    }
     _STEP_COST_ESTIMATE = {
-        "goods_not_received": 6,       # select + 2 queries + attach + strategy + submit
-        "credit_not_processed": 3,     # select + strategy + resolve
-        "duplicate_processing": 3,     # select + strategy + resolve
-        "fraud_cnp": 8,                # select + policy + 2-3 queries + attach + strategy + submit
-        "product_not_as_described": 8, # select + policy + 2-3 queries + attach + strategy + submit
-        "service_not_provided": 7,     # select + policy + 2 queries + attach + strategy + submit
+        "goods_not_received": 6,  # select + 2 queries + attach + strategy + submit
+        "credit_not_processed": 3,  # select + strategy + resolve
+        "duplicate_processing": 3,  # select + strategy + resolve
+        "fraud_cnp": 8,  # select + policy + 2-3 queries + attach + strategy + submit
+        "product_not_as_described": 8,  # select + policy + 2-3 queries + attach + strategy + submit
+        "service_not_provided": 7,  # select + policy + 2 queries + attach + strategy + submit
     }
 
     def _case_priority(item):
-        return (item["steps_until_deadline"], 0 if item["reason_code"] in _FAST_REASON_CODES else 1, -item["amount"])
+        return (
+            item["steps_until_deadline"],
+            0 if item["reason_code"] in _FAST_REASON_CODES else 1,
+            -item["amount"],
+        )
 
     if visible_case is None:
         steps_remaining = observation.get("steps_remaining", 999)
         # Smart triage: if total estimated cost > budget, fast-concede the cheapest-to-lose cases first.
         if len(open_cases) > 1:
-            total_cost = sum(_STEP_COST_ESTIMATE.get(c["reason_code"], 7) for c in open_cases)
+            total_cost = sum(
+                _STEP_COST_ESTIMATE.get(c["reason_code"], 7) for c in open_cases
+            )
             if total_cost > steps_remaining:
                 # Budget can't fit all cases. Strategy:
                 # 1. Handle deterministic-strategy cases first (cheapest, guaranteed outcome).
@@ -283,11 +314,14 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
                     is_fast = c["reason_code"] in _FAST_REASON_CODES
                     # Fast cases go first (tier 0), then by amount descending (highest value first).
                     return (0 if is_fast else 1, -c["amount"])
+
                 ordered = sorted(open_cases, key=_triage_key)
                 for case in ordered:
                     candidates.append(
                         CandidateAction(
-                            action=ChargebackOpsAction(action_type="select_case", case_id=case["case_id"]),
+                            action=ChargebackOpsAction(
+                                action_type="select_case", case_id=case["case_id"]
+                            ),
                             summary=(
                                 f"Select case {case['case_id']} ({case['reason_code']}, amount ${case['amount']}, "
                                 f"deadline in {case['steps_until_deadline']} steps)."
@@ -299,7 +333,9 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
         for case in sorted(open_cases, key=_case_priority):
             candidates.append(
                 CandidateAction(
-                    action=ChargebackOpsAction(action_type="select_case", case_id=case["case_id"]),
+                    action=ChargebackOpsAction(
+                        action_type="select_case", case_id=case["case_id"]
+                    ),
                     summary=(
                         f"Select case {case['case_id']} ({case['reason_code']}, amount ${case['amount']}, "
                         f"deadline in {case['steps_until_deadline']} steps)."
@@ -313,7 +349,9 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
         for case in sorted(open_cases, key=_case_priority):
             candidates.append(
                 CandidateAction(
-                    action=ChargebackOpsAction(action_type="select_case", case_id=case["case_id"]),
+                    action=ChargebackOpsAction(
+                        action_type="select_case", case_id=case["case_id"]
+                    ),
                     summary=(
                         f"Switch to open case {case['case_id']} (deadline in {case['steps_until_deadline']} steps, "
                         f"amount ${case['amount']})."
@@ -323,14 +361,19 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
         return candidates
 
     current_deadline = _visible_case_deadline(queue, case_id)
-    best_other = _best_open_case([case for case in open_cases if case["case_id"] != case_id])
+    best_other = _best_open_case(
+        [case for case in open_cases if case["case_id"] != case_id]
+    )
     # Only switch to an urgent other case if the current case isn't close to completion.
     # "Close" means: strategy is set and evidence attached (1 step to submit),
     # OR evidence is attached and strategy just needs to be set (2 steps to finish).
     _has_attached = len(visible_case.get("attached_evidence", [])) >= 1
     current_near_completion = (
-        (visible_case.get("current_strategy") == "contest" and _has_attached)
-        or (_has_attached and visible_case.get("current_strategy") is None and current_deadline >= 2)
+        visible_case.get("current_strategy") == "contest" and _has_attached
+    ) or (
+        _has_attached
+        and visible_case.get("current_strategy") is None
+        and current_deadline >= 2
     )
     if (
         best_other is not None
@@ -340,7 +383,9 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
     ):
         candidates.append(
             CandidateAction(
-                action=ChargebackOpsAction(action_type="select_case", case_id=best_other["case_id"]),
+                action=ChargebackOpsAction(
+                    action_type="select_case", case_id=best_other["case_id"]
+                ),
                 summary=(
                     f"Switch to case {best_other['case_id']} immediately because its deadline is in "
                     f"{best_other['steps_until_deadline']} steps."
@@ -369,16 +414,26 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
         else:
             candidates.append(
                 CandidateAction(
-                    action=ChargebackOpsAction(action_type="retrieve_policy", case_id=case_id),
+                    action=ChargebackOpsAction(
+                        action_type="retrieve_policy", case_id=case_id
+                    ),
                     summary="Retrieve the chargeback policy for the selected reason code.",
                 )
             )
             inferred_strategy = None
     else:
         guidance_text = policy.get("guidance", "").lower()
-        if "do not contest" in guidance_text or "concede" in guidance_text or "not supportable" in guidance_text:
+        if (
+            "do not contest" in guidance_text
+            or "concede" in guidance_text
+            or "not supportable" in guidance_text
+        ):
             inferred_strategy = "accept_chargeback"
-        elif "refund immediately" in guidance_text or "refund" in guidance_text and "contest" not in guidance_text:
+        elif (
+            "refund immediately" in guidance_text
+            or "refund" in guidance_text
+            and "contest" not in guidance_text
+        ):
             inferred_strategy = "issue_refund"
         else:
             inferred_strategy = "contest"
@@ -398,7 +453,9 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
     attachable_ids = _batch_attachable_ids(retrieved_items, attached_ids)
 
     # Detect harmful evidence already attached — must remove before submit.
-    harmful_attached_ids = [item["evidence_id"] for item in attached_evidence if _is_harmful_evidence(item)]
+    harmful_attached_ids = [
+        item["evidence_id"] for item in attached_evidence if _is_harmful_evidence(item)
+    ]
 
     # ── HARMFUL CLEANUP: if harmful evidence is attached, remove it immediately ──
     if harmful_attached_ids:
@@ -417,11 +474,19 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
 
     # ── DEADLINE URGENCY: if near deadline and we have evidence, submit/resolve NOW ──
     if current_deadline <= 1:
-        if current_strategy is not None and len(attached_ids) >= 1 and current_strategy == "contest":
+        if (
+            current_strategy is not None
+            and len(attached_ids) >= 1
+            and current_strategy == "contest"
+        ):
             candidates.insert(
                 0,
                 CandidateAction(
-                    action=ChargebackOpsAction(action_type="submit_representment", case_id=case_id, note=_build_representment_note(visible_case)),
+                    action=ChargebackOpsAction(
+                        action_type="submit_representment",
+                        case_id=case_id,
+                        note=_build_representment_note(visible_case),
+                    ),
                     summary=f"URGENT: Submit representment for {case_id} — deadline imminent.",
                 ),
             )
@@ -445,7 +510,9 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
     # Fast-concede when:
     #   (a) Not enough global steps remaining, OR
     #   (b) Multi-case scenario where this case is lower-value and budget can't fit all.
-    _est_cost = _STEP_COST_ESTIMATE.get(reason_code, 7) - 1  # subtract select_case already done
+    _est_cost = (
+        _STEP_COST_ESTIMATE.get(reason_code, 7) - 1
+    )  # subtract select_case already done
     # Minimum contest: policy(1) + query(1) + attach(1) + strategy(1) + submit(1) = 5 steps.
     _MIN_CONTEST_STEPS = 5
     _should_fast_concede = False
@@ -455,15 +522,22 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
         and current_strategy is None
         and not systems_revealed
     ):
-        if steps_remaining < _MIN_CONTEST_STEPS or current_deadline < _MIN_CONTEST_STEPS:
+        if (
+            steps_remaining < _MIN_CONTEST_STEPS
+            or current_deadline < _MIN_CONTEST_STEPS
+        ):
             # Not enough steps or deadline to even minimally contest.
             _should_fast_concede = True
         elif len(open_cases) > 1:
             # Multi-case triage: concede if total cost > budget and this case is lowest-value.
-            total_cost = sum(_STEP_COST_ESTIMATE.get(c["reason_code"], 7) for c in open_cases)
+            total_cost = sum(
+                _STEP_COST_ESTIMATE.get(c["reason_code"], 7) for c in open_cases
+            )
             if total_cost > steps_remaining:
                 lowest_amount = min(c["amount"] for c in open_cases)
-                this_amount = next(c["amount"] for c in open_cases if c["case_id"] == case_id)
+                this_amount = next(
+                    c["amount"] for c in open_cases if c["case_id"] == case_id
+                )
                 if this_amount <= lowest_amount:
                     _should_fast_concede = True
     if _should_fast_concede:
@@ -472,7 +546,9 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
             0,
             CandidateAction(
                 action=ChargebackOpsAction(
-                    action_type="resolve_case", case_id=case_id, strategy=fallback,
+                    action_type="resolve_case",
+                    case_id=case_id,
+                    strategy=fallback,
                 ),
                 summary=f"Budget too tight to contest — fast-resolve {case_id} with {fallback}.",
             ),
@@ -481,7 +557,8 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
 
     # ── BUDGET PRESSURE: if more open cases than steps, fast-resolve concedable ──
     if steps_remaining <= len(open_cases) * 2 and inferred_strategy in {
-        "accept_chargeback", "issue_refund",
+        "accept_chargeback",
+        "issue_refund",
     }:
         target_strat = inferred_strategy
         if current_strategy != target_strat:
@@ -489,7 +566,9 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
                 0,
                 CandidateAction(
                     action=ChargebackOpsAction(
-                        action_type="set_strategy", case_id=case_id, strategy=target_strat,
+                        action_type="set_strategy",
+                        case_id=case_id,
+                        strategy=target_strat,
                     ),
                     summary=f"Fast-set strategy to {target_strat} under budget pressure.",
                 ),
@@ -499,7 +578,9 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
             0,
             CandidateAction(
                 action=ChargebackOpsAction(
-                    action_type="resolve_case", case_id=case_id, strategy=target_strat,
+                    action_type="resolve_case",
+                    case_id=case_id,
+                    strategy=target_strat,
                 ),
                 summary=f"Fast-resolve {case_id} with {target_strat} under budget pressure.",
             ),
@@ -559,20 +640,25 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
             # Under tight budgets or deadline pressure, skip optional 'orders' query.
             fraud_systems = ["risk", "support", "orders"]
             unrevealed_fraud = [s for s in fraud_systems if s not in systems_revealed]
-            if len(unrevealed_fraud) > max_queries_before_deadline or budget_per_case < 7:
+            if (
+                len(unrevealed_fraud) > max_queries_before_deadline
+                or budget_per_case < 7
+            ):
                 fraud_systems = ["risk", "support"]
-                unrevealed_fraud = [s for s in fraud_systems if s not in systems_revealed]
+                unrevealed_fraud = [
+                    s for s in fraud_systems if s not in systems_revealed
+                ]
             for system_name in unrevealed_fraud:
-                    candidates.append(
-                        CandidateAction(
-                            action=ChargebackOpsAction(
-                                action_type="query_system",
-                                case_id=case_id,
-                                system_name=system_name,
-                            ),
-                            summary=f"Query the {system_name} system for evidence on case {case_id}.",
-                        )
+                candidates.append(
+                    CandidateAction(
+                        action=ChargebackOpsAction(
+                            action_type="query_system",
+                            case_id=case_id,
+                            system_name=system_name,
+                        ),
+                        summary=f"Query the {system_name} system for evidence on case {case_id}.",
                     )
+                )
             if attachable_ids:
                 candidates.append(
                     CandidateAction(
@@ -669,13 +755,17 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
             if current_strategy != target:
                 candidates.append(
                     CandidateAction(
-                        action=ChargebackOpsAction(action_type="set_strategy", case_id=case_id, strategy=target),
+                        action=ChargebackOpsAction(
+                            action_type="set_strategy", case_id=case_id, strategy=target
+                        ),
                         summary=f"Set strategy to {target} — listing defense not supportable.",
                     )
                 )
             candidates.append(
                 CandidateAction(
-                    action=ChargebackOpsAction(action_type="resolve_case", case_id=case_id, strategy=target),
+                    action=ChargebackOpsAction(
+                        action_type="resolve_case", case_id=case_id, strategy=target
+                    ),
                     summary=f"Resolve with {target} — conceding per policy guidance.",
                 )
             )
@@ -747,13 +837,17 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
             if current_strategy != target:
                 candidates.append(
                     CandidateAction(
-                        action=ChargebackOpsAction(action_type="set_strategy", case_id=case_id, strategy=target),
+                        action=ChargebackOpsAction(
+                            action_type="set_strategy", case_id=case_id, strategy=target
+                        ),
                         summary=f"Set strategy to {target} — service defense not supportable.",
                     )
                 )
             candidates.append(
                 CandidateAction(
-                    action=ChargebackOpsAction(action_type="resolve_case", case_id=case_id, strategy=target),
+                    action=ChargebackOpsAction(
+                        action_type="resolve_case", case_id=case_id, strategy=target
+                    ),
                     summary=f"Resolve with {target} — conceding per policy guidance.",
                 )
             )
@@ -761,7 +855,9 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
             snp_systems = ["orders", "support"]
             unrevealed_snp = [s for s in snp_systems if s not in systems_revealed]
             if len(unrevealed_snp) > max_queries_before_deadline:
-                snp_systems = ["support"]  # Support is most critical for service disputes.
+                snp_systems = [
+                    "support"
+                ]  # Support is most critical for service disputes.
                 unrevealed_snp = [s for s in snp_systems if s not in systems_revealed]
             for system_name in unrevealed_snp:
                 candidates.append(
@@ -900,7 +996,10 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
                 )
             )
 
-    if visible_case.get("inspection_notes") is None and observation["steps_remaining"] > 3:
+    if (
+        visible_case.get("inspection_notes") is None
+        and observation["steps_remaining"] > 3
+    ):
         candidates.append(
             CandidateAction(
                 action=ChargebackOpsAction(action_type="inspect_case", case_id=case_id),
@@ -908,11 +1007,15 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
             )
         )
 
-    for case in sorted(open_cases, key=lambda item: (item["steps_until_deadline"], -item["amount"])):
+    for case in sorted(
+        open_cases, key=lambda item: (item["steps_until_deadline"], -item["amount"])
+    ):
         if case["case_id"] != case_id:
             candidates.append(
                 CandidateAction(
-                    action=ChargebackOpsAction(action_type="select_case", case_id=case["case_id"]),
+                    action=ChargebackOpsAction(
+                        action_type="select_case", case_id=case["case_id"]
+                    ),
                     summary=(
                         f"Switch to case {case['case_id']} (deadline in {case['steps_until_deadline']} steps, "
                         f"amount ${case['amount']})."
@@ -948,7 +1051,9 @@ def _obvious_next_action(
         open_cases = [case for case in queue if case["status"] == "open"]
         if len(open_cases) == 1:
             return first
-        urgent_cases = [case for case in open_cases if case["steps_until_deadline"] <= 1]
+        urgent_cases = [
+            case for case in open_cases if case["steps_until_deadline"] <= 1
+        ]
         if (
             len(urgent_cases) == 1
             and first.action.action_type == "select_case"
@@ -980,17 +1085,28 @@ def _obvious_next_action(
             for candidate in candidates[1:]
             if candidate.action.action_type == "set_strategy"
         }
-        if strategy in {"accept_chargeback", "issue_refund"} and "contest" not in competing_strategies:
+        if (
+            strategy in {"accept_chargeback", "issue_refund"}
+            and "contest" not in competing_strategies
+        ):
             return first
 
     if first.action.action_type == "select_case":
         current_case_id = visible_case["case_id"]
         current_deadline = next(
-            (case["steps_until_deadline"] for case in queue if case["case_id"] == current_case_id),
+            (
+                case["steps_until_deadline"]
+                for case in queue
+                if case["case_id"] == current_case_id
+            ),
             999,
         )
         target_deadline = next(
-            (case["steps_until_deadline"] for case in queue if case["case_id"] == first.action.case_id),
+            (
+                case["steps_until_deadline"]
+                for case in queue
+                if case["case_id"] == first.action.case_id
+            ),
             999,
         )
         if target_deadline < current_deadline:
@@ -1075,10 +1191,16 @@ def _resolve_provider(
     provider: str | None,
     model_name: str | None,
 ) -> ProviderConfig:
-    chosen_provider = (provider or os.getenv("BASELINE_PROVIDER") or DEFAULT_PROVIDER).lower()
-    chosen_model = model_name or os.getenv("BASELINE_MODEL") or DEFAULT_MODELS.get(
-        chosen_provider,
-        "openai/gpt-oss-120b",
+    chosen_provider = (
+        provider or os.getenv("BASELINE_PROVIDER") or DEFAULT_PROVIDER
+    ).lower()
+    chosen_model = (
+        model_name
+        or os.getenv("BASELINE_MODEL")
+        or DEFAULT_MODELS.get(
+            chosen_provider,
+            "openai/gpt-oss-120b",
+        )
     )
     return ProviderConfig(provider=chosen_provider, model_name=chosen_model)
 
@@ -1158,7 +1280,7 @@ def _provider_pick(
                         "content": (
                             "You are a merchant chargeback dispute analyst. Pick the single best next action from the candidates. "
                             "Prioritize: 1) deadline-urgent cases, 2) evidence-backed contests, 3) fast concedes for weak cases. "
-                            "Avoid attaching harmful evidence. Return JSON: {\"candidate_index\": N, \"rationale\": \"brief reason\"}"
+                            'Avoid attaching harmful evidence. Return JSON: {"candidate_index": N, "rationale": "brief reason"}'
                         ),
                     },
                     {"role": "user", "content": payload},
@@ -1198,7 +1320,9 @@ def _provider_pick(
                 messages=[{"role": "user", "content": payload}],
             )
             text = "".join(
-                block.text for block in response.content if getattr(block, "type", "") == "text"
+                block.text
+                for block in response.content
+                if getattr(block, "type", "") == "text"
             )
             choice = _safe_json_loads(text)
             if choice is None:
@@ -1217,7 +1341,9 @@ def _provider_pick_with_fallback(
     candidates: list[CandidateAction],
 ) -> tuple[CandidateAction, bool, bool, str | None]:
     """Try the primary provider, then walk the fallback chain on failure."""
-    candidate, attempted, succeeded, error = _provider_pick(config, observation, candidates)
+    candidate, attempted, succeeded, error = _provider_pick(
+        config, observation, candidates
+    )
     if succeeded:
         return candidate, attempted, succeeded, error
 
@@ -1229,7 +1355,9 @@ def _provider_pick_with_fallback(
         if fb_client is None:
             continue
         candidate, fb_attempted, fb_succeeded, fb_error = _provider_pick(
-            fb_config, observation, candidates,
+            fb_config,
+            observation,
+            candidates,
         )
         if fb_succeeded:
             return candidate, True, True, None
@@ -1275,15 +1403,19 @@ def run_baseline(
                 observation = env.step(obvious_candidate.action)
                 continue
             if has_provider_key:
-                candidate, attempted, succeeded, error_label = _provider_pick_with_fallback(
-                    config,
-                    observation_payload,
-                    candidates,
+                candidate, attempted, succeeded, error_label = (
+                    _provider_pick_with_fallback(
+                        config,
+                        observation_payload,
+                        candidates,
+                    )
                 )
                 provider_calls_attempted += int(attempted)
                 provider_calls_succeeded += int(succeeded)
                 if attempted and not succeeded and error_label is not None:
-                    provider_errors[error_label] = provider_errors.get(error_label, 0) + 1
+                    provider_errors[error_label] = (
+                        provider_errors.get(error_label, 0) + 1
+                    )
                 if _strict_llm_mode() and attempted and not succeeded:
                     raise RuntimeError(
                         "STRICT_LLM_MODE is enabled and the provider decision failed, "

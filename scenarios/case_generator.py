@@ -8,7 +8,7 @@ while the scenario space is effectively infinite.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 try:
@@ -116,8 +116,20 @@ def _assign_network(rng: random.Random, reason_code: str) -> tuple[str, str, int
 
 
 _FIRST_NAMES = (
-    "Alex", "Jordan", "Sam", "Morgan", "Casey", "Riley", "Taylor",
-    "Quinn", "Avery", "Dakota", "Reese", "Blake", "Skyler", "Drew",
+    "Alex",
+    "Jordan",
+    "Sam",
+    "Morgan",
+    "Casey",
+    "Riley",
+    "Taylor",
+    "Quinn",
+    "Avery",
+    "Dakota",
+    "Reese",
+    "Blake",
+    "Skyler",
+    "Drew",
 )
 
 
@@ -161,47 +173,65 @@ _GOODS_NOT_RECEIVED = _CaseTemplate(
     base_weight=1.0,
     evidence_blueprints=(
         _EvidenceBlueprint(
-            "ORDER-CONF", "orders", "Order confirmation",
+            "ORDER-CONF",
+            "orders",
+            "Order confirmation",
             (
                 "Order confirmation email and checkout receipt showing the billed customer, shipping address, and SKU.",
                 "Original order receipt with billing name, address, and itemized products.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         _EvidenceBlueprint(
-            "AUTH", "payment", "Authorization record",
+            "AUTH",
+            "payment",
+            "Authorization record",
             ("Authorization approved and captured successfully.",),
         ),
         _EvidenceBlueprint(
-            "DELIVERY", "shipping", "Carrier delivery scan",
+            "DELIVERY",
+            "shipping",
+            "Carrier delivery scan",
             (
                 "Carrier tracking shows delivered to the customer address.",
                 "Delivery scan confirms package arrived at the registered shipping address.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         _EvidenceBlueprint(
-            "SIGNATURE", "shipping", "Delivery signature",
+            "SIGNATURE",
+            "shipping",
+            "Delivery signature",
             (
                 "Carrier recorded a recipient signature at the delivery address.",
                 "Signed-for delivery confirmation at destination.",
             ),
-            helpful=True, probability=0.6,
+            helpful=True,
+            probability=0.6,
         ),
         _EvidenceBlueprint(
-            "SUPPORT", "support", "Support interaction",
+            "SUPPORT",
+            "support",
+            "Support interaction",
             (
                 "Customer contacted support asking about delivery status after tracking showed delivered.",
                 "Customer inquired about the package location post-delivery.",
             ),
-            helpful=True, probability=0.5,
+            helpful=True,
+            probability=0.5,
         ),
         _EvidenceBlueprint(
-            "NO-REFUND", "refunds", "Refund ledger",
+            "NO-REFUND",
+            "refunds",
+            "Refund ledger",
             ("No refund or goodwill credit was issued before the dispute opened.",),
         ),
         _EvidenceBlueprint(
-            "RISK", "risk", "Risk summary",
+            "RISK",
+            "risk",
+            "Risk summary",
             ("Low-risk order with no fraud flags.",),
         ),
     ),
@@ -232,7 +262,9 @@ _FRAUD_CNP_STRONG = _CaseTemplate(
     base_weight=1.1,
     evidence_blueprints=(
         _EvidenceBlueprint(
-            "ORDER", "orders", "Order receipt",
+            "ORDER",
+            "orders",
+            "Order receipt",
             (
                 "Checkout receipt with customer account id and shipping address matching prior purchases.",
                 "Order confirmation linked to an established customer account.",
@@ -240,27 +272,37 @@ _FRAUD_CNP_STRONG = _CaseTemplate(
             helpful=True,
         ),
         _EvidenceBlueprint(
-            "AVS-MISMATCH", "payment", "AVS mismatch detail",
+            "AVS-MISMATCH",
+            "payment",
+            "AVS mismatch detail",
             (
                 "Street-number mismatch was recorded at authorization time.",
                 "AVS partial match — zip matched but street did not.",
             ),
-            harmful=True, probability=0.7,
+            harmful=True,
+            probability=0.7,
         ),
         _EvidenceBlueprint(
-            "CVV-MISMATCH", "payment", "CVV mismatch detail",
+            "CVV-MISMATCH",
+            "payment",
+            "CVV mismatch detail",
             (
                 "CVV did not fully match at authorization time.",
                 "CVV verification returned a mismatch result.",
             ),
-            harmful=True, probability=0.5,
+            harmful=True,
+            probability=0.5,
         ),
         _EvidenceBlueprint(
-            "AUTH", "payment", "Authorization capture",
+            "AUTH",
+            "payment",
+            "Authorization capture",
             ("Payment was successfully authorized and captured.",),
         ),
         _EvidenceBlueprint(
-            "DELIVERY", "shipping", "Carrier delivery confirmation",
+            "DELIVERY",
+            "shipping",
+            "Carrier delivery confirmation",
             (
                 "Package was delivered to the saved customer address.",
                 "Carrier tracking confirms delivery to the account's shipping address.",
@@ -268,29 +310,40 @@ _FRAUD_CNP_STRONG = _CaseTemplate(
             helpful=True,
         ),
         _EvidenceBlueprint(
-            "ACCOUNT-CHAT", "support", "Authenticated support chat",
+            "ACCOUNT-CHAT",
+            "support",
+            "Authenticated support chat",
             (
                 "Customer logged into the account and confirmed the order in chat before shipment.",
                 "Authenticated support session where the customer discussed this order.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         _EvidenceBlueprint(
-            "NO-REFUND", "refunds", "Refund ledger",
+            "NO-REFUND",
+            "refunds",
+            "Refund ledger",
             ("No refund or cancellation was issued prior to the dispute.",),
         ),
         _EvidenceBlueprint(
-            "PRIOR-ORDERS", "risk", "Prior account activity",
+            "PRIOR-ORDERS",
+            "risk",
+            "Prior account activity",
             (
                 "Same account, same device fingerprint, and prior fulfilled orders without disputes.",
                 "Established account with consistent device and address history.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         _EvidenceBlueprint(
-            "VELOCITY", "risk", "Velocity check",
+            "VELOCITY",
+            "risk",
+            "Velocity check",
             ("No abnormal velocity or proxy usage detected.",),
-            helpful=True, probability=0.5,
+            helpful=True,
+            probability=0.5,
         ),
     ),
 )
@@ -319,14 +372,18 @@ _FRAUD_CNP_WEAK = _CaseTemplate(
     base_weight=0.8,
     evidence_blueprints=(
         _EvidenceBlueprint(
-            "ORDER", "orders", "Order receipt",
+            "ORDER",
+            "orders",
+            "Order receipt",
             (
                 "Guest checkout with a new shipping address and no prior order history.",
                 "Order placed without account login, new address, no purchase history.",
             ),
         ),
         _EvidenceBlueprint(
-            "AVS", "payment", "AVS mismatch detail",
+            "AVS",
+            "payment",
+            "AVS mismatch detail",
             (
                 "Street and postal code mismatches were present.",
                 "AVS returned a full mismatch for this transaction.",
@@ -334,7 +391,9 @@ _FRAUD_CNP_WEAK = _CaseTemplate(
             harmful=True,
         ),
         _EvidenceBlueprint(
-            "CVV", "payment", "CVV mismatch detail",
+            "CVV",
+            "payment",
+            "CVV mismatch detail",
             (
                 "CVV did not match.",
                 "CVV verification failed at authorization.",
@@ -342,19 +401,27 @@ _FRAUD_CNP_WEAK = _CaseTemplate(
             harmful=True,
         ),
         _EvidenceBlueprint(
-            "DELIVERY", "shipping", "Carrier delivery confirmation",
+            "DELIVERY",
+            "shipping",
+            "Carrier delivery confirmation",
             ("Delivered to a new address without signature.",),
         ),
         _EvidenceBlueprint(
-            "SUPPORT", "support", "Support log",
+            "SUPPORT",
+            "support",
+            "Support log",
             ("No authenticated support interactions were recorded.",),
         ),
         _EvidenceBlueprint(
-            "NO-REFUND", "refunds", "Refund ledger",
+            "NO-REFUND",
+            "refunds",
+            "Refund ledger",
             ("No refund issued before the chargeback.",),
         ),
         _EvidenceBlueprint(
-            "RISK", "risk", "Risk summary",
+            "RISK",
+            "risk",
+            "Risk summary",
             (
                 "Elevated risk score and no positive account history.",
                 "High-risk transaction with no account-level trust signals.",
@@ -387,18 +454,24 @@ _CREDIT_NOT_PROCESSED = _CaseTemplate(
     base_weight=1.2,
     evidence_blueprints=(
         _EvidenceBlueprint(
-            "ORDER", "orders", "Invoice",
+            "ORDER",
+            "orders",
+            "Invoice",
             (
                 "Subscription renewed automatically for the plan period.",
                 "Recurring charge invoice for the billing cycle.",
             ),
         ),
         _EvidenceBlueprint(
-            "PAYMENT", "payment", "Captured payment",
+            "PAYMENT",
+            "payment",
+            "Captured payment",
             ("Renewal payment settled successfully.",),
         ),
         _EvidenceBlueprint(
-            "CANCEL", "support", "Cancellation request",
+            "CANCEL",
+            "support",
+            "Cancellation request",
             (
                 "Customer requested cancellation before renewal and support promised a refund.",
                 "Support ticket confirms the customer asked to cancel before the charge date.",
@@ -406,7 +479,9 @@ _CREDIT_NOT_PROCESSED = _CaseTemplate(
             helpful=True,
         ),
         _EvidenceBlueprint(
-            "NO-REFUND", "refunds", "Refund ledger",
+            "NO-REFUND",
+            "refunds",
+            "Refund ledger",
             (
                 "No refund has been issued as of the dispute open date.",
                 "Refund ledger shows no credit processed for this transaction.",
@@ -440,14 +515,18 @@ _DUPLICATE_PROCESSING = _CaseTemplate(
     base_weight=1.0,
     evidence_blueprints=(
         _EvidenceBlueprint(
-            "ORDER", "orders", "Order record",
+            "ORDER",
+            "orders",
+            "Order record",
             (
                 "Single order with one expected charge amount.",
                 "Order confirmation showing one purchase at the disputed amount.",
             ),
         ),
         _EvidenceBlueprint(
-            "DUP-AUTH", "payment", "Duplicate authorization",
+            "DUP-AUTH",
+            "payment",
+            "Duplicate authorization",
             (
                 "Two authorization captures recorded for the same order ID and amount.",
                 "Payment log shows duplicate settlement for this transaction.",
@@ -455,19 +534,26 @@ _DUPLICATE_PROCESSING = _CaseTemplate(
             helpful=True,
         ),
         _EvidenceBlueprint(
-            "ORIGINAL-AUTH", "payment", "Original authorization",
+            "ORIGINAL-AUTH",
+            "payment",
+            "Original authorization",
             ("First authorization and capture succeeded normally.",),
         ),
         _EvidenceBlueprint(
-            "SUPPORT", "support", "Customer complaint",
+            "SUPPORT",
+            "support",
+            "Customer complaint",
             (
                 "Customer reported the double charge to support before filing the dispute.",
                 "Support ticket opened about duplicate billing.",
             ),
-            helpful=True, probability=0.6,
+            helpful=True,
+            probability=0.6,
         ),
         _EvidenceBlueprint(
-            "NO-REFUND", "refunds", "Refund ledger",
+            "NO-REFUND",
+            "refunds",
+            "Refund ledger",
             ("No refund for the duplicate charge has been issued yet.",),
             helpful=True,
         ),
@@ -499,35 +585,48 @@ _PRODUCT_NOT_AS_DESCRIBED = _CaseTemplate(
     base_weight=1.0,
     evidence_blueprints=(
         _EvidenceBlueprint(
-            "ORDER", "orders", "Order details",
+            "ORDER",
+            "orders",
+            "Order details",
             (
                 "Order with correct SKU and product description matching the listing.",
                 "Checkout receipt showing the exact product title and specifications ordered.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         _EvidenceBlueprint(
-            "LISTING", "orders", "Product listing snapshot",
+            "LISTING",
+            "orders",
+            "Product listing snapshot",
             (
                 "Archived product listing matches manufacturer specifications.",
                 "Product page snapshot shows accurate description and images.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         _EvidenceBlueprint(
-            "AUTH", "payment", "Payment capture",
+            "AUTH",
+            "payment",
+            "Payment capture",
             ("Payment authorized and settled for the listed price.",),
         ),
         _EvidenceBlueprint(
-            "DELIVERY", "shipping", "Delivery confirmation",
+            "DELIVERY",
+            "shipping",
+            "Delivery confirmation",
             (
                 "Item delivered to the customer address within the estimated window.",
                 "Carrier tracking confirms successful delivery.",
             ),
-            helpful=True, probability=0.7,
+            helpful=True,
+            probability=0.7,
         ),
         _EvidenceBlueprint(
-            "RETURN-POLICY", "support", "Return policy record",
+            "RETURN-POLICY",
+            "support",
+            "Return policy record",
             (
                 "Return window was still open but no return was initiated before the dispute.",
                 "Merchant return policy allows returns within 30 days; no return request was filed.",
@@ -535,11 +634,15 @@ _PRODUCT_NOT_AS_DESCRIBED = _CaseTemplate(
             helpful=True,
         ),
         _EvidenceBlueprint(
-            "NO-REFUND", "refunds", "Refund ledger",
+            "NO-REFUND",
+            "refunds",
+            "Refund ledger",
             ("No return or refund was processed before the chargeback.",),
         ),
         _EvidenceBlueprint(
-            "RISK", "risk", "Risk assessment",
+            "RISK",
+            "risk",
+            "Risk assessment",
             (
                 "Standard-risk transaction with no prior dispute history.",
                 "Low-risk order from a repeat customer.",
@@ -576,59 +679,81 @@ _GOODS_NOT_RECEIVED_ADVERSARIAL = _CaseTemplate(
     base_weight=1.3,
     evidence_blueprints=(
         _EvidenceBlueprint(
-            "ORDER-CONF", "orders", "Order confirmation",
+            "ORDER-CONF",
+            "orders",
+            "Order confirmation",
             (
                 "Order receipt with billing name, address, and itemized products.",
                 "Original order confirmation email showing the billed customer.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         _EvidenceBlueprint(
-            "DELIVERY", "shipping", "Carrier delivery scan",
+            "DELIVERY",
+            "shipping",
+            "Carrier delivery scan",
             (
                 "Carrier tracking confirms delivery to the registered shipping address.",
                 "Delivery scan shows package arrived at the customer address.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         # ADVERSARIAL: title sounds helpful, content is harmful
         _EvidenceBlueprint(
-            "DELIVERY-DETAIL", "shipping", "Delivery verification report",
+            "DELIVERY-DETAIL",
+            "shipping",
+            "Delivery verification report",
             (
                 "GPS coordinates at delivery time show a 200m discrepancy from the registered address. "
                 "Driver noted the recipient was not present and package was left unattended.",
                 "Delivery verification flagged a geolocation mismatch between the scanned delivery point "
                 "and the customer's registered address.",
             ),
-            harmful=True, probability=0.9,
+            harmful=True,
+            probability=0.9,
         ),
         _EvidenceBlueprint(
-            "SIGNATURE", "shipping", "Delivery signature",
+            "SIGNATURE",
+            "shipping",
+            "Delivery signature",
             ("Recipient signature recorded at delivery.",),
-            helpful=True, probability=0.4,
+            helpful=True,
+            probability=0.4,
         ),
         # ADVERSARIAL: title sounds helpful, content is harmful
         _EvidenceBlueprint(
-            "CARRIER-NOTES", "shipping", "Carrier compliance summary",
+            "CARRIER-NOTES",
+            "shipping",
+            "Carrier compliance summary",
             (
                 "Carrier flagged this delivery as a high-risk address with multiple prior non-receipt claims. "
                 "Delivery was attempted twice before successful scan.",
                 "Carrier notes indicate the address has been suspended from guaranteed delivery due to "
                 "repeated delivery disputes.",
             ),
-            harmful=True, probability=0.7,
+            harmful=True,
+            probability=0.7,
         ),
         _EvidenceBlueprint(
-            "SUPPORT", "support", "Support interaction",
+            "SUPPORT",
+            "support",
+            "Support interaction",
             ("Customer contacted support about delivery status.",),
-            helpful=True, probability=0.5,
+            helpful=True,
+            probability=0.5,
         ),
         _EvidenceBlueprint(
-            "NO-REFUND", "refunds", "Refund ledger",
+            "NO-REFUND",
+            "refunds",
+            "Refund ledger",
             ("No refund issued before the dispute.",),
         ),
         _EvidenceBlueprint(
-            "RISK", "risk", "Risk summary",
+            "RISK",
+            "risk",
+            "Risk summary",
             ("Standard transaction risk profile.",),
         ),
     ),
@@ -657,7 +782,9 @@ _FRAUD_CNP_ADVERSARIAL = _CaseTemplate(
     base_weight=1.2,
     evidence_blueprints=(
         _EvidenceBlueprint(
-            "ORDER", "orders", "Order receipt",
+            "ORDER",
+            "orders",
+            "Order receipt",
             (
                 "Checkout receipt linked to an established customer account.",
                 "Order confirmation with customer account ID and shipping address.",
@@ -665,24 +792,32 @@ _FRAUD_CNP_ADVERSARIAL = _CaseTemplate(
             helpful=True,
         ),
         _EvidenceBlueprint(
-            "PRIOR-ORDERS", "risk", "Prior account activity",
+            "PRIOR-ORDERS",
+            "risk",
+            "Prior account activity",
             (
                 "Same account with three prior fulfilled orders over 6 months.",
                 "Established account with consistent purchase history.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         _EvidenceBlueprint(
-            "ACCOUNT-CHAT", "support", "Authenticated support chat",
+            "ACCOUNT-CHAT",
+            "support",
+            "Authenticated support chat",
             (
                 "Customer logged in and confirmed the order in a support chat.",
                 "Authenticated session where customer discussed this purchase.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         # ADVERSARIAL: title sounds like it helps, content destroys the case
         _EvidenceBlueprint(
-            "ACCOUNT-REVIEW", "risk", "Account verification summary",
+            "ACCOUNT-REVIEW",
+            "risk",
+            "Account verification summary",
             (
                 "Account review shows the shipping address was changed 2 hours before this order. "
                 "New device fingerprint does not match any prior sessions. "
@@ -691,11 +826,14 @@ _FRAUD_CNP_ADVERSARIAL = _CaseTemplate(
                 "and the password was reset 4 hours before this purchase. "
                 "Device fingerprint is inconsistent with prior login history.",
             ),
-            harmful=True, probability=0.85,
+            harmful=True,
+            probability=0.85,
         ),
         # ADVERSARIAL: another trap
         _EvidenceBlueprint(
-            "TRANSACTION-VERIFY", "payment", "Transaction authentication report",
+            "TRANSACTION-VERIFY",
+            "payment",
+            "Transaction authentication report",
             (
                 "3D Secure challenge was presented but failed on the first attempt. "
                 "Authorization proceeded on a liability-shift exemption. "
@@ -703,20 +841,28 @@ _FRAUD_CNP_ADVERSARIAL = _CaseTemplate(
                 "Transaction authentication record shows the cardholder failed the "
                 "initial verification challenge. Authorization was force-approved by the merchant.",
             ),
-            harmful=True, probability=0.8,
+            harmful=True,
+            probability=0.8,
         ),
         _EvidenceBlueprint(
-            "AVS-MISMATCH", "payment", "AVS mismatch detail",
+            "AVS-MISMATCH",
+            "payment",
+            "AVS mismatch detail",
             ("Street-number mismatch recorded at authorization time.",),
-            harmful=True, probability=0.6,
+            harmful=True,
+            probability=0.6,
         ),
         _EvidenceBlueprint(
-            "DELIVERY", "shipping", "Carrier delivery confirmation",
+            "DELIVERY",
+            "shipping",
+            "Carrier delivery confirmation",
             ("Package delivered to the account's shipping address.",),
             helpful=True,
         ),
         _EvidenceBlueprint(
-            "NO-REFUND", "refunds", "Refund ledger",
+            "NO-REFUND",
+            "refunds",
+            "Refund ledger",
             ("No refund issued before the dispute.",),
         ),
     ),
@@ -739,46 +885,64 @@ _SERVICE_NOT_PROVIDED = _CaseTemplate(
         "Contest service-not-provided disputes when provider records confirm the "
         "service was delivered. Attach service completion logs and any customer acknowledgment."
     ),
-    policy_requirements=("service completion record", "customer acknowledgment or scheduling proof"),
+    policy_requirements=(
+        "service completion record",
+        "customer acknowledgment or scheduling proof",
+    ),
     optimal_strategy="contest",
     acceptable_strategies=("issue_refund",),
     resolution_summary="Contest with service completion proof. The service was delivered as booked.",
     base_weight=1.0,
     evidence_blueprints=(
         _EvidenceBlueprint(
-            "BOOKING", "orders", "Service booking",
+            "BOOKING",
+            "orders",
+            "Service booking",
             (
                 "Booking confirmation for the service appointment with date and details.",
                 "Service order with scheduled date, customer name, and service description.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         _EvidenceBlueprint(
-            "AUTH", "payment", "Payment record",
+            "AUTH",
+            "payment",
+            "Payment record",
             ("Payment authorized and captured for the service fee.",),
         ),
         _EvidenceBlueprint(
-            "COMPLETION", "support", "Service completion log",
+            "COMPLETION",
+            "support",
+            "Service completion log",
             (
                 "Provider marked the service as completed on the scheduled date.",
                 "Service delivery confirmation logged by the provider.",
             ),
-            helpful=True, required=True,
+            helpful=True,
+            required=True,
         ),
         _EvidenceBlueprint(
-            "FEEDBACK", "support", "Customer feedback",
+            "FEEDBACK",
+            "support",
+            "Customer feedback",
             (
                 "Customer left a positive review after the service was completed.",
                 "Post-service survey response received from the customer.",
             ),
-            helpful=True, probability=0.4,
+            helpful=True,
+            probability=0.4,
         ),
         _EvidenceBlueprint(
-            "NO-REFUND", "refunds", "Refund ledger",
+            "NO-REFUND",
+            "refunds",
+            "Refund ledger",
             ("No refund or credit was issued before the dispute.",),
         ),
         _EvidenceBlueprint(
-            "RISK", "risk", "Risk summary",
+            "RISK",
+            "risk",
+            "Risk summary",
             ("Standard transaction with no fraud indicators.",),
         ),
     ),
@@ -809,7 +973,9 @@ _CONCEDABLE_TEMPLATES: tuple[_CaseTemplate, ...] = (
     _DUPLICATE_PROCESSING,
 )
 
-_ALL_TEMPLATES: tuple[_CaseTemplate, ...] = _CONTESTABLE_TEMPLATES + _CONCEDABLE_TEMPLATES
+_ALL_TEMPLATES: tuple[_CaseTemplate, ...] = (
+    _CONTESTABLE_TEMPLATES + _CONCEDABLE_TEMPLATES
+)
 
 
 # ---------------------------------------------------------------------------
@@ -884,7 +1050,9 @@ def generate_case(
     amount = _amount(rng, 50.0, 2000.0)
 
     evidence_by_system, required_ids, helpful_ids, harmful_ids = _generate_evidence(
-        rng, prefix, template.evidence_blueprints,
+        rng,
+        prefix,
+        template.evidence_blueprints,
     )
 
     # If required evidence was gated out and a weak variant exists, flip strategy
@@ -894,10 +1062,14 @@ def generate_case(
         strategy = template.weak_variant_strategy
         # When strategy flips, the original optimal becomes acceptable
         acceptable = (template.optimal_strategy,) + tuple(
-            s for s in template.acceptable_strategies if s != template.weak_variant_strategy
+            s
+            for s in template.acceptable_strategies
+            if s != template.weak_variant_strategy
         )
 
-    network, network_code, window_days, ce_category = _assign_network(rng, template.reason_code)
+    network, network_code, window_days, ce_category = _assign_network(
+        rng, template.reason_code
+    )
 
     return InternalCase(
         case_id=f"CB-G{case_index}",
@@ -992,15 +1164,11 @@ def generate_task(
             # Hard: mix of contestable, concedable, and adversarial
             if i == 0:
                 # First case: adversarial contestable (trap evidence)
-                template = rng.choice(
-                    _ADVERSARIAL_TEMPLATES + _CONTESTABLE_TEMPLATES
-                )
+                template = rng.choice(_ADVERSARIAL_TEMPLATES + _CONTESTABLE_TEMPLATES)
             elif i == 1:
                 template = rng.choice(_CONCEDABLE_TEMPLATES)
             else:
-                template = rng.choice(
-                    _ALL_TEMPLATES + _ADVERSARIAL_TEMPLATES
-                )
+                template = rng.choice(_ALL_TEMPLATES + _ADVERSARIAL_TEMPLATES)
         else:
             # Medium: any template
             template = rng.choice(_ALL_TEMPLATES)
@@ -1098,7 +1266,11 @@ def generate_task_suite(
 
     tasks: list[TaskScenario] = []
     seed = base_seed
-    for difficulty, count in [("easy", easy_count), ("medium", medium_count), ("hard", hard_count)]:
+    for difficulty, count in [
+        ("easy", easy_count),
+        ("medium", medium_count),
+        ("hard", hard_count),
+    ]:
         for _ in range(count):
             tasks.append(generate_task(seed, difficulty=difficulty))
             seed += 1

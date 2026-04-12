@@ -50,7 +50,9 @@ if load_dotenv is not None:  # pragma: no cover
 
 
 def _inference_timeout_seconds() -> float:
-    raw_value = os.getenv("INFERENCE_TIMEOUT_SECONDS", os.getenv("BASELINE_REQUEST_TIMEOUT_SECONDS", "15"))
+    raw_value = os.getenv(
+        "INFERENCE_TIMEOUT_SECONDS", os.getenv("BASELINE_REQUEST_TIMEOUT_SECONDS", "15")
+    )
     try:
         return max(1.0, float(raw_value))
     except ValueError:
@@ -139,7 +141,7 @@ def _pick_with_openai_client(
                     "content": (
                         "You are a merchant chargeback dispute analyst. Pick the single best next action from the candidates. "
                         "Prioritize: 1) deadline-urgent cases, 2) evidence-backed contests, 3) fast concedes for weak cases. "
-                        "Avoid attaching harmful evidence. Return JSON: {\"candidate_index\": N, \"rationale\": \"brief reason\"}"
+                        'Avoid attaching harmful evidence. Return JSON: {"candidate_index": N, "rationale": "brief reason"}'
                     ),
                 },
                 {"role": "user", "content": payload},
@@ -171,7 +173,10 @@ def run_inference(*, structured_output: bool = True) -> BaselineRunResult:
     task_results: list[BaselineTaskResult] = []
     for task in list_tasks():
         if structured_output:
-            print(f"[START] task={task.task_id} env=chargeback_ops model={model_name}", flush=True)
+            print(
+                f"[START] task={task.task_id} env=chargeback_ops model={model_name}",
+                flush=True,
+            )
 
         env = ChargebackOpsEnvironment()
         observation = env.reset(task_id=task.task_id)
@@ -188,7 +193,9 @@ def run_inference(*, structured_output: bool = True) -> BaselineRunResult:
             if len(candidates) == 1:
                 candidate = candidates[0]
             else:
-                obvious_candidate = _obvious_next_action(observation_payload, candidates)
+                obvious_candidate = _obvious_next_action(
+                    observation_payload, candidates
+                )
                 if obvious_candidate is not None:
                     candidate = obvious_candidate
                 elif client is not None and model_name:
@@ -203,14 +210,19 @@ def run_inference(*, structured_output: bool = True) -> BaselineRunResult:
                         fb_client, fb_model = _build_fallback_client()
                         if fb_client is not None and fb_model:
                             candidate, fb_ok, fb_err = _pick_with_openai_client(
-                                fb_client, fb_model, observation_payload, candidates,
+                                fb_client,
+                                fb_model,
+                                observation_payload,
+                                candidates,
                             )
                             if fb_ok:
                                 succeeded = True
                                 error_label = None
                     provider_calls_succeeded += int(succeeded)
                     if not succeeded and error_label is not None:
-                        provider_errors[error_label] = provider_errors.get(error_label, 0) + 1
+                        provider_errors[error_label] = (
+                            provider_errors.get(error_label, 0) + 1
+                        )
                     if _strict_llm_mode() and not succeeded:
                         raise RuntimeError(
                             "STRICT_LLM_MODE is enabled and the provider decision failed, "
@@ -231,7 +243,10 @@ def run_inference(*, structured_output: bool = True) -> BaselineRunResult:
 
             if structured_output:
                 error_val = "null"
-                if observation.last_action_result and "error" in observation.last_action_result.lower():
+                if (
+                    observation.last_action_result
+                    and "error" in observation.last_action_result.lower()
+                ):
                     error_val = observation.last_action_result
                 print(
                     f"[STEP] step={step_num} action={action_str} "

@@ -23,7 +23,12 @@ try:
         PolicyView,
         VisibleCase,
     )
-    from ..scenarios.simulation import ActionRecord, CaseProgress, InternalCase, get_task
+    from ..scenarios.simulation import (
+        ActionRecord,
+        CaseProgress,
+        InternalCase,
+        get_task,
+    )
 except ImportError:  # pragma: no cover
     from core.episode_store import record_report
     from evaluation.grading import grade_episode
@@ -102,7 +107,9 @@ class ChargebackOpsEnvironment(
                 f"Must be one of: {', '.join(sorted(_VALID_DIFFICULTIES))}"
             )
         if task_id is None and difficulty in _VALID_DIFFICULTIES:
-            resolved_seed = seed if seed is not None else int(kwargs.get("generated_seed", 42))
+            resolved_seed = (
+                seed if seed is not None else int(kwargs.get("generated_seed", 42))
+            )
             task_id = f"generated_{difficulty}_s{resolved_seed}"
         if task_id is None:
             task_id = "goods_not_received_easy"
@@ -232,11 +239,16 @@ class ChargebackOpsEnvironment(
         progress = self._progress_by_case[case.case_id]
         if system_name in progress.revealed_systems:
             progress.duplicate_queries += 1
-            return -0.03, f"System '{system_name}' was already queried for case {case.case_id}."
+            return (
+                -0.03,
+                f"System '{system_name}' was already queried for case {case.case_id}.",
+            )
 
         progress.revealed_systems.add(system_name)
         new_evidence = case.evidence_by_system.get(system_name, ())
-        progress.retrieved_evidence_ids.update(item.evidence_id for item in new_evidence)
+        progress.retrieved_evidence_ids.update(
+            item.evidence_id for item in new_evidence
+        )
         helpful = sum(1 for item in new_evidence if item.helpful)
         if helpful > 0:
             return 0.06 + 0.01 * helpful, (
@@ -326,18 +338,28 @@ class ChargebackOpsEnvironment(
         progress = self._progress_by_case[case.case_id]
         progress.current_strategy = strategy
         if strategy == case.optimal_strategy:
-            return 0.1, f"Set the optimal strategy '{strategy}' for case {case.case_id}."
+            return (
+                0.1,
+                f"Set the optimal strategy '{strategy}' for case {case.case_id}.",
+            )
         if strategy in case.acceptable_strategies:
-            return 0.03, f"Set an acceptable fallback strategy '{strategy}' for case {case.case_id}."
+            return (
+                0.03,
+                f"Set an acceptable fallback strategy '{strategy}' for case {case.case_id}.",
+            )
         return -0.08, f"Set a weak strategy '{strategy}' for case {case.case_id}."
 
-    def _submit_representment(self, case: InternalCase, *, note: str | None = None) -> tuple[float, str]:
+    def _submit_representment(
+        self, case: InternalCase, *, note: str | None = None
+    ) -> tuple[float, str]:
         progress = self._progress_by_case[case.case_id]
         progress.submit_attempts += 1
         if note:
             progress.representment_note = note
         if progress.current_strategy != "contest":
-            raise ValueError("submit_representment requires current strategy to be 'contest'.")
+            raise ValueError(
+                "submit_representment requires current strategy to be 'contest'."
+            )
         if progress.resolution_status != "open":
             return -0.05, f"Case {case.case_id} is already resolved."
 
@@ -348,7 +370,10 @@ class ChargebackOpsEnvironment(
             progress.final_resolution = "contest"
             progress.resolution_status = "lost_late"
             progress.resolved_at_step = self._state.step_count
-            return -0.2, f"Representment for case {case.case_id} was submitted after the deadline."
+            return (
+                -0.2,
+                f"Representment for case {case.case_id} was submitted after the deadline.",
+            )
         if missing:
             progress.final_resolution = "contest"
             progress.resolution_status = "lost_incomplete"
@@ -368,9 +393,15 @@ class ChargebackOpsEnvironment(
         progress.resolved_at_step = self._state.step_count
         if case.optimal_strategy == "contest":
             progress.resolution_status = "won"
-            return 0.2, f"Submitted a strong representment package for case {case.case_id}."
+            return (
+                0.2,
+                f"Submitted a strong representment package for case {case.case_id}.",
+            )
         progress.resolution_status = "lost_contest"
-        return -0.12, f"Contested case {case.case_id}, but the case was not supportable."
+        return (
+            -0.12,
+            f"Contested case {case.case_id}, but the case was not supportable.",
+        )
 
     def _resolve_case(
         self,
@@ -380,7 +411,9 @@ class ChargebackOpsEnvironment(
         progress = self._progress_by_case[case.case_id]
         resolution = strategy or progress.current_strategy
         if resolution not in {"accept_chargeback", "issue_refund"}:
-            raise ValueError("resolve_case requires strategy accept_chargeback or issue_refund.")
+            raise ValueError(
+                "resolve_case requires strategy accept_chargeback or issue_refund."
+            )
         if progress.resolution_status != "open":
             return -0.04, f"Case {case.case_id} is already resolved."
         progress.final_resolution = resolution
@@ -392,16 +425,25 @@ class ChargebackOpsEnvironment(
         if self._state.step_count > case.deadline_step:
             return -0.15, f"Resolved case {case.case_id} after the response deadline."
         if resolution == case.optimal_strategy:
-            return 0.16, f"Resolved case {case.case_id} with the optimal non-contest strategy."
+            return (
+                0.16,
+                f"Resolved case {case.case_id} with the optimal non-contest strategy.",
+            )
         if resolution in case.acceptable_strategies:
-            return 0.06, f"Resolved case {case.case_id} with an acceptable fallback strategy."
+            return (
+                0.06,
+                f"Resolved case {case.case_id} with an acceptable fallback strategy.",
+            )
         return -0.12, f"Resolved case {case.case_id} with the wrong strategy."
 
     def _apply_deadline_penalties(self) -> float:
         penalty = 0.0
         for case in self._task.cases:
             progress = self._progress_by_case[case.case_id]
-            if progress.resolution_status == "open" and self._state.step_count > case.deadline_step:
+            if (
+                progress.resolution_status == "open"
+                and self._state.step_count > case.deadline_step
+            ):
                 if not progress.deadline_penalized:
                     progress.deadline_penalized = True
                     penalty -= 0.15
@@ -441,7 +483,9 @@ class ChargebackOpsEnvironment(
 
     def _case_fingerprint(self, case: InternalCase) -> str:
         return hashlib.sha1(
-            f"{case.case_id}|{case.order_id}|{case.customer_id}|{case.reason_code}".encode("utf-8")
+            f"{case.case_id}|{case.order_id}|{case.customer_id}|{case.reason_code}".encode(
+                "utf-8"
+            )
         ).hexdigest()
 
     def _case_display_metadata(self, case: InternalCase) -> dict[str, str]:
@@ -487,7 +531,9 @@ class ChargebackOpsEnvironment(
             else:
                 resolved_cases += 1
 
-        deadline_pressure = 0.0 if len(self._task.cases) == 0 else urgent_cases / len(self._task.cases)
+        deadline_pressure = (
+            0.0 if len(self._task.cases) == 0 else urgent_cases / len(self._task.cases)
+        )
         triage_efficiency = resolved_cases / max(1, self._state.step_count)
         return {
             "open_case_count": float(open_cases),
@@ -514,7 +560,9 @@ class ChargebackOpsEnvironment(
         all_systems = {"orders", "payment", "shipping", "support", "refunds", "risk"}
         return {
             "deadline_warning": (case.deadline_step - self._state.step_count) <= 2,
-            "unqueried_systems": sorted(all_systems.difference(progress.revealed_systems)),
+            "unqueried_systems": sorted(
+                all_systems.difference(progress.revealed_systems)
+            ),
             "attached_evidence_count": len(progress.attached_evidence_ids),
             "retrieved_evidence_count": len(progress.retrieved_evidence_ids),
             "steps_until_deadline": case.deadline_step - self._state.step_count,
@@ -658,7 +706,8 @@ class ChargebackOpsEnvironment(
                 case_id=case.case_id,
                 status=self._progress_by_case[case.case_id].resolution_status,
                 current_strategy=self._progress_by_case[case.case_id].current_strategy,
-                resolved=self._progress_by_case[case.case_id].resolution_status != "open",
+                resolved=self._progress_by_case[case.case_id].resolution_status
+                != "open",
                 steps_until_deadline=case.deadline_step - self._state.step_count,
             )
             for case in self._task.cases

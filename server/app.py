@@ -112,7 +112,10 @@ def generate_tasks(
         from ..scenarios.case_generator import generate_task_suite
 
     suite = generate_task_suite(
-        base_seed=seed, easy_count=easy, medium_count=medium, hard_count=hard,
+        base_seed=seed,
+        easy_count=easy,
+        medium_count=medium,
+        hard_count=hard,
     )
     return [
         {

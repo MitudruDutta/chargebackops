@@ -79,17 +79,21 @@ pie title Case Score Weights
 
 ## Benchmark Results
 
-10-task benchmark (3 showcase + 7 seeded holdout), heuristic+LLM agent:
+10-task benchmark (3 showcase + 7 seeded holdout). Full reproducible numbers in
+[`docs/RESULTS.md`](docs/RESULTS.md).
 
-| Difficulty | Tasks | Avg Score | Notes |
-|---|---|---|---|
-| Easy | 2 | 0.963 | Near-perfect |
-| Medium | 3 | 0.518 | Struggles with ambiguous fraud |
-| Hard | 3 | 0.686 | Adversarial evidence traps |
-| Nightmare | 2 | 0.474 | Step budget exhaustion |
-| **Overall** | **10** | **0.648** | **0.96 to 0.47 curve** |
+| Difficulty | Tasks | Heuristic (no LLM) | Heuristic + LLM tiebreak | Naive baseline |
+|---|---|---|---|---|
+| Easy | 2 | **0.963** | 0.963 | 0.344 |
+| Medium | 3 | **0.826** | 0.755 | 0.359 |
+| Hard | 3 | **0.681** | 0.697 | 0.172 |
+| Nightmare | 2 | **0.488** | 0.418 | 0.146 |
+| **Overall** | **10** | **0.742** | **0.711** | **0.257** |
 
-Heuristic vs naive (blind `issue_refund`) gap: **+0.26 average**, **+0.68 on contestable cases**.
+**Rubric discrimination:** heuristic vs. naive concede-everything delta is **+0.485** — the
+rubric cannot be gamed by a lazy agent, and the hard-band tasks cannot be trivially saturated.
+Per-dimension breakdown, score reproduction commands, and calibration notes live in
+[`docs/RESULTS.md`](docs/RESULTS.md).
 
 ## Action Space (9 typed actions)
 
@@ -177,7 +181,7 @@ Entry point: [`inference.py`](inference.py). Fallback chain: primary provider ->
 ├── scenarios/                # Tasks, generator, ISO adapter
 ├── server/                   # FastAPI app, environment, Gradio demo
 ├── connectors/               # Stripe sandbox connector
-├── tests/                    # 21 tests (env, grader, API, compliance)
+├── tests/                    # 22 tests (env, grader, API, compliance)
 ├── Dockerfile
 └── pyproject.toml
 ```

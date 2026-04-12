@@ -21,7 +21,11 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-from runners.baseline_runner import _heuristic_pick, _obvious_next_action, candidate_actions
+from runners.baseline_runner import (
+    _heuristic_pick,
+    _obvious_next_action,
+    candidate_actions,
+)
 from evaluation.grading import grade_episode
 from core.models import ChargebackOpsAction
 from server.chargeback_ops_environment import ChargebackOpsEnvironment
@@ -73,7 +77,11 @@ def _map_iso_reason(code: str, description: str) -> str | None:
     text = f"{code} {description}".lower()
     if "unauthorized" in text or "fraud" in text or code.upper().startswith("FR"):
         return "fraud_cnp"
-    if "not received" in text or "goods or services not received" in text or code.upper().startswith("NR"):
+    if (
+        "not received" in text
+        or "goods or services not received" in text
+        or code.upper().startswith("NR")
+    ):
         return "goods_not_received"
     if "credit not processed" in text or "refund" in text:
         return "credit_not_processed"
@@ -110,13 +118,18 @@ def profile_dataset(path: Path, row_limit: int = 5000) -> dict[str, Any]:
                     fraud_values.append(int(float(row[fraud_col])))
                 except ValueError:
                     pass
-            if "chargeback_reason_code" in row and "chargeback_reason_description" in row:
+            if (
+                "chargeback_reason_code" in row
+                and "chargeback_reason_description" in row
+            ):
                 mapped = _map_iso_reason(
                     row.get("chargeback_reason_code", ""),
                     row.get("chargeback_reason_description", ""),
                 )
                 if mapped is not None:
-                    mapped_reason_counts[mapped] = mapped_reason_counts.get(mapped, 0) + 1
+                    mapped_reason_counts[mapped] = (
+                        mapped_reason_counts.get(mapped, 0) + 1
+                    )
             if sampled_rows >= row_limit:
                 break
 
@@ -150,10 +163,7 @@ def derive_dataset_seeds(data_dir: Path, seeds_needed: int) -> list[int]:
         with path.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             for row in reader:
-                token = "|".join(
-                    f"{key}={row[key]}"
-                    for key in sorted(row.keys())[:8]
-                )
+                token = "|".join(f"{key}={row[key]}" for key in sorted(row.keys())[:8])
                 seeds.append(_stable_seed(f"{path.name}|{token}"))
                 if len(seeds) >= seeds_needed:
                     return seeds
@@ -203,7 +213,9 @@ def run_episode(task_id: str, policy: str = "heuristic") -> dict[str, Any]:
             if not candidates:
                 stalled = True
                 break
-            candidate = _obvious_next_action(payload, candidates) or _heuristic_pick(candidates)
+            candidate = _obvious_next_action(payload, candidates) or _heuristic_pick(
+                candidates
+            )
             action = candidate.action
         elif policy == "bad":
             action = _bad_policy_action(observation)
@@ -341,9 +353,7 @@ def build_report(
         - generated["overall"]["bad_control"]["avg_score"]
     )
     verdict = {
-        "score_bounds_ok": all(
-            0.0 <= item["score"] <= 1.0 for item in fixed["tasks"]
-        ),
+        "score_bounds_ok": all(0.0 <= item["score"] <= 1.0 for item in fixed["tasks"]),
         "heuristic_beats_bad_overall": generated["overall"]["heuristic_beats_bad"],
         "difficulty_signal_present": generated["difficulty_signal"]["easy_avg_score"]
         >= generated["difficulty_signal"]["hard_avg_score"],
@@ -367,7 +377,9 @@ def build_report(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a brutal local audit of ChargebackOps.")
+    parser = argparse.ArgumentParser(
+        description="Run a brutal local audit of ChargebackOps."
+    )
     parser.add_argument("--episodes-per-difficulty", type=int, default=12)
     parser.add_argument("--control-episodes", type=int, default=6)
     parser.add_argument("--dataset-profile-rows", type=int, default=5000)
