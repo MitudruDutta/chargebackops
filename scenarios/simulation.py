@@ -236,7 +236,7 @@ TASKS: dict[str, TaskScenario] = {
     "fraud_signal_ambiguity": TaskScenario(
         task_id="fraud_signal_ambiguity",
         title="Fraud Signal Ambiguity",
-        difficulty="medium",
+        difficulty="easy",
         objective="Choose whether to contest a CNP fraud dispute and curate only the evidence that helps.",
         description=(
             "A card-not-present fraud dispute with mixed signals. Strong account-linkage evidence exists, "

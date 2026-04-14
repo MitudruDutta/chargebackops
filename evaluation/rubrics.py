@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from openenv.core.rubrics import Rubric, WeightedSum
+from openenv.core.rubrics import Gate, Rubric, WeightedSum
 
 try:
     from ..scenarios.simulation import CaseProgress, InternalCase, TaskScenario
@@ -155,6 +155,37 @@ class DeadlineComplianceRubric(Rubric):
             else ctx.step_count
         )
         if resolution_step > case.deadline_step:
+            return 0.0
+        return 1.0
+
+
+class CaseAbandonedRubric(Rubric):
+    """Hard-constraint rubric: 0.0 if the case was abandoned past deadline.
+
+    Used as the inner rubric for the :class:`Gate` wrapped around
+    :class:`CaseRubric`. The distinction from :class:`DeadlineComplianceRubric`
+    is intentional:
+
+    * :class:`DeadlineComplianceRubric` is the *dimension* — penalises any
+      late resolution with a 0 in the weighted sum (15% score drop).
+    * :class:`CaseAbandonedRubric` is the *gate* — hard-zeros the entire
+      case only when the agent never even attempted to resolve it before
+      the deadline expired. In real chargeback operations this is the
+      "no contest, case closed" outcome: the merchant forfeited.
+
+    This split means a late-but-completed representment takes the 15%
+    deadline penalty (and still gets graded on evidence, strategy, and
+    packet quality), while a case left untouched after the deadline
+    collapses the entire case score to 0.
+    """
+
+    def forward(self, action: Any, observation: Any) -> float:
+        ctx: GradingContext = action
+        progress = ctx.progress
+        case = ctx.case
+        if _final_resolution(progress) != "unresolved":
+            return 1.0
+        if ctx.step_count > case.deadline_step:
             return 0.0
         return 1.0
 
@@ -324,7 +355,18 @@ CASE_DIMENSION_NAMES: tuple[str, ...] = (
 
 
 class CaseRubric(Rubric):
-    """Per-case composite — weighted sum of the seven scoring dimensions."""
+    """Per-case composite — weighted sum of the seven scoring dimensions,
+    hard-gated on deadline compliance.
+
+    The weighted sum lives in :class:`WeightedSum`. On top of that, a
+    :class:`Gate` wrapping :class:`DeadlineComplianceRubric` at
+    ``threshold=1.0`` hard-zeros the whole case if the deadline is missed —
+    in real chargeback operations the best evidence in the world can't save a
+    case filed too late, so a late resolution must collapse the case score,
+    not just reduce one dimension. This is a direct use of OpenEnv's
+    :class:`Gate` primitive and exposes the hard-constraint pattern through
+    :meth:`named_rubrics`.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -340,9 +382,21 @@ class CaseRubric(Rubric):
             ],
             weights=list(CASE_DIMENSION_WEIGHTS),
         )
+        # Hard constraint: a case never even *attempted* before the deadline
+        # expires collapses the entire case score. This wraps
+        # :class:`CaseAbandonedRubric` (not :class:`DeadlineComplianceRubric`)
+        # so late-but-completed representments still get dimension-level
+        # credit while truly abandoned cases are zeroed.
+        self.deadline_gate = Gate(CaseAbandonedRubric(), threshold=1.0)
 
     def forward(self, action: Any, observation: Any) -> float:
-        return self.aggregator(action, observation)
+        # Always run the aggregator first so per-dimension ``last_score``
+        # values are fresh for the grader breakdown, even when the gate
+        # hard-fails the case.
+        weighted = self.aggregator(action, observation)
+        if self.deadline_gate(action, observation) < 1.0:
+            return 0.0
+        return weighted
 
     def dimension_scores(self) -> dict[str, float]:
         """Return per-dimension scores from the most recent forward pass."""

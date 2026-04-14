@@ -84,14 +84,15 @@ pie title Case Score Weights
 
 | Difficulty | Tasks | Heuristic (no LLM) | Heuristic + LLM tiebreak | Naive baseline |
 |---|---|---|---|---|
-| Easy | 2 | **0.963** | 0.963 | 0.344 |
-| Medium | 3 | **0.826** | 0.755 | 0.359 |
-| Hard | 3 | **0.681** | 0.697 | 0.172 |
-| Nightmare | 2 | **0.488** | 0.418 | 0.146 |
-| **Overall** | **10** | **0.742** | **0.711** | **0.257** |
+| Easy | 3 | **0.964** | 0.778 | 0.365 |
+| Medium | 2 | **0.755** | 0.608 | 0.278 |
+| Hard | 3 | **0.680** | 0.697 | 0.113 |
+| Nightmare | 2 | **0.466** | 0.289 | 0.065 |
+| **Overall** | **10** | **0.738** | **0.622** | **0.212** |
 
-**Rubric discrimination:** heuristic vs. naive concede-everything delta is **+0.485** — the
-rubric cannot be gamed by a lazy agent, and the hard-band tasks cannot be trivially saturated.
+**Rubric discrimination:** heuristic vs. naive concede-everything delta is **+0.526** — the
+rubric cannot be gamed by a lazy agent, and the `Gate(CaseAbandonedRubric)` wrapper hard-zeros
+cases left unresolved past their deadline so the hard-band tasks cannot be trivially saturated.
 Per-dimension breakdown, score reproduction commands, and calibration notes live in
 [`docs/RESULTS.md`](docs/RESULTS.md).
 

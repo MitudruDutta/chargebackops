@@ -587,12 +587,12 @@ Nightmare tasks push the step budget to its limit: 5-6 cases with ~2.4 steps per
 
 Tested across the 10-task benchmark (3 showcase + 7 seeded holdout):
 
-| Difficulty | Tasks | Avg Score | Key Observations |
-|---|---|---|---|
-| Easy | 2 | 0.963 | Near-perfect on straightforward cases |
-| Medium | 3 | 0.518 | Agent struggles with ambiguous fraud signals |
-| Hard | 3 | 0.686 | Wrong strategies on adversarial evidence traps |
-| Nightmare | 2 | 0.474 | Step budget exhaustion, 2-3 cases left unresolved |
-| **Overall** | **10** | **0.648** | **Clear difficulty curve from 0.96 to 0.47** |
+| Difficulty | Tasks | Heuristic | LLM tiebreak | Bad | Key Observations |
+|---|---|---|---|---|---|
+| Easy | 3 | 0.964 | 0.778 | 0.365 | Near-perfect heuristic; LLM mispicks on `fraud_signal_ambiguity` |
+| Medium | 2 | 0.755 | 0.608 | 0.278 | Strategy selection + evidence curation drive the spread |
+| Hard | 3 | 0.680 | 0.697 | 0.113 | LLM edges heuristic on `queue_optimization_hard` |
+| Nightmare | 2 | 0.466 | 0.289 | 0.065 | 5-case portfolios with deadline_step=3–5; step budget collides |
+| **Overall** | **10** | **0.738** | **0.622** | **0.212** | **Delta 0.526 vs bad policy** |
 
-The difficulty curve demonstrates the environment discriminates effectively: easy tasks are near-trivial, nightmare tasks push even the heuristic+LLM agent below 50%. The medium-tier drop (0.518) is driven by `fraud_signal_ambiguity` where the agent picks the wrong strategy on genuinely ambiguous evidence.
+The difficulty curve demonstrates the environment discriminates effectively: easy tasks are near-trivial, nightmare tasks push every agent below 50%. The `Gate(CaseAbandonedRubric)` wrapper hard-zeros cases left unresolved past their deadline, so the heuristic's slowness on nightmare portfolios shows up as a real signal rather than dilution across 7 partial dimensions. See `docs/RESULTS.md` for full per-task numbers.

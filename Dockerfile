@@ -7,10 +7,21 @@ WORKDIR /app
 
 RUN useradd --create-home appuser
 
-COPY . /app
-
+# Install dependencies in a cached layer that only invalidates when
+# pyproject.toml changes. The dep list is extracted from pyproject.toml at
+# build time so there's no duplication between the two files.
+COPY pyproject.toml README.md /app/
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir .
+    python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']))" > /tmp/requirements.txt && \
+    pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
+
+# Copy the full source tree and register the project itself. --no-deps is
+# safe because the deps layer above has already resolved everything, and it
+# keeps this layer fast: editing a single source file re-runs a few-second
+# package registration instead of a multi-minute dependency solve.
+COPY . /app
+RUN pip install --no-cache-dir --no-deps .
 
 RUN chown -R appuser:appuser /app
 
