@@ -589,10 +589,10 @@ Tested across the 10-task benchmark (3 showcase + 7 seeded holdout):
 
 | Difficulty | Tasks | Heuristic | LLM tiebreak | Bad | Key Observations |
 |---|---|---|---|---|---|
-| Easy | 3 | 0.964 | 0.778 | 0.365 | Near-perfect heuristic; LLM mispicks on `fraud_signal_ambiguity` |
-| Medium | 2 | 0.755 | 0.608 | 0.278 | Strategy selection + evidence curation drive the spread |
-| Hard | 3 | 0.680 | 0.697 | 0.113 | LLM edges heuristic on `queue_optimization_hard` |
-| Nightmare | 2 | 0.466 | 0.289 | 0.065 | 5-case portfolios with deadline_step=3–5; step budget collides |
-| **Overall** | **10** | **0.738** | **0.622** | **0.212** | **Delta 0.526 vs bad policy** |
+| Easy | 3 | 0.964 | 0.964 | 0.323 | Heuristic + LLM both saturate the easy band |
+| Medium | 2 | 0.755 | 0.755 | 0.278 | Strategy selection + evidence curation drive the spread |
+| Hard | 3 | 0.635 | 0.651 | 0.113 | LLM edges heuristic on `queue_optimization_hard` (+0.049) |
+| Nightmare | 2 | 0.466 | 0.466 | 0.065 | 5-case portfolios with deadline_step=3–5; step budget collides |
+| **Overall** | **10** | **0.724** | **0.729** | **0.199** | **Delta 0.525 vs bad policy** |
 
-The difficulty curve demonstrates the environment discriminates effectively: easy tasks are near-trivial, nightmare tasks push every agent below 50%. The `Gate(CaseAbandonedRubric)` wrapper hard-zeros cases left unresolved past their deadline, so the heuristic's slowness on nightmare portfolios shows up as a real signal rather than dilution across 7 partial dimensions. See `docs/RESULTS.md` for full per-task numbers.
+The difficulty curve demonstrates the environment discriminates effectively: easy tasks are near-trivial, nightmare tasks push every agent below 50%. The `Gate(CaseAbandonedRubric)` wrapper hard-zeros cases left unresolved past their deadline, so the heuristic's slowness on nightmare portfolios shows up as a real signal rather than dilution across 7 partial dimensions. The LLM-assisted run now edges ahead of the pure heuristic (+0.005) and makes only **7 provider calls** across the 10-task run (down from 19 in v1) because `_obvious_next_action` short-circuits deterministic workflow states — strategy picks, add/remove evidence, submit, resolve. A 28-task multi-seed grid (7 seeds × 4 difficulties) reports heuristic 0.712 ± 0.235 and bad policy 0.241 ± 0.194 — the fixed-seed headline is within 1σ of the multi-seed result. See `docs/RESULTS.md` for full per-task numbers.

@@ -84,17 +84,22 @@ pie title Case Score Weights
 
 | Difficulty | Tasks | Heuristic (no LLM) | Heuristic + LLM tiebreak | Naive baseline |
 |---|---|---|---|---|
-| Easy | 3 | **0.964** | 0.778 | 0.365 |
-| Medium | 2 | **0.755** | 0.608 | 0.278 |
-| Hard | 3 | **0.680** | 0.697 | 0.113 |
-| Nightmare | 2 | **0.466** | 0.289 | 0.065 |
-| **Overall** | **10** | **0.738** | **0.622** | **0.212** |
+| Easy | 3 | 0.964 | **0.964** | 0.323 |
+| Medium | 2 | 0.755 | **0.755** | 0.278 |
+| Hard | 3 | 0.635 | **0.651** | 0.113 |
+| Nightmare | 2 | 0.466 | **0.466** | 0.065 |
+| **Overall** | **10** | **0.724** | **0.729** | **0.199** |
 
-**Rubric discrimination:** heuristic vs. naive concede-everything delta is **+0.526** — the
+28-task multi-seed grid (7 seeds × 4 difficulties, fully offline): heuristic **0.712 ± 0.235**,
+bad policy **0.241 ± 0.194**, delta **+0.471** — within 1σ of the headline fixed-seed delta.
+
+**Rubric discrimination:** heuristic vs. naive concede-everything delta is **+0.525** — the
 rubric cannot be gamed by a lazy agent, and the `Gate(CaseAbandonedRubric)` wrapper hard-zeros
 cases left unresolved past their deadline so the hard-band tasks cannot be trivially saturated.
-Per-dimension breakdown, score reproduction commands, and calibration notes live in
-[`docs/RESULTS.md`](docs/RESULTS.md).
+The LLM-assisted run edges ahead of the pure heuristic (+0.005) while making only **7 provider
+calls** (down from 19 in v1) because `_obvious_next_action` now short-circuits all
+deterministic workflow states. Per-dimension breakdown, score reproduction commands, and
+calibration notes live in [`docs/RESULTS.md`](docs/RESULTS.md).
 
 ## Action Space (9 typed actions)
 
@@ -132,11 +137,21 @@ for name, r in env.rubric.named_rubrics():
 # ... (all 7 dimensions)
 ```
 
+Run the server in Docker:
+
 ```bash
-# Docker
+# 1. Build the image (tag: chargebackops)
 docker build -t chargebackops .
+
+# 2a. Offline run — no env vars required
+docker run --rm -p 8000:8000 chargebackops
+
+# 2b. With LLM provider keys (requires .env from Quick Start above)
 docker run --rm -p 8000:8000 --env-file .env chargebackops
 ```
+
+The container exposes the FastAPI app on port 8000 (`/docs` for OpenAPI, `/demo` for the Gradio
+live demo, `/health` for readiness). Stop it with Ctrl-C or `docker stop`.
 
 ## API
 

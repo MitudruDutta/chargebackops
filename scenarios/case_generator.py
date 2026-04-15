@@ -580,7 +580,7 @@ _PRODUCT_NOT_AS_DESCRIBED = _CaseTemplate(
     ),
     policy_requirements=("product listing verification", "return policy documentation"),
     optimal_strategy="contest",
-    acceptable_strategies=("issue_refund",),
+    acceptable_strategies=(),
     resolution_summary="Contest with listing accuracy proof and return policy documentation.",
     base_weight=1.0,
     evidence_blueprints=(
@@ -890,7 +890,7 @@ _SERVICE_NOT_PROVIDED = _CaseTemplate(
         "customer acknowledgment or scheduling proof",
     ),
     optimal_strategy="contest",
-    acceptable_strategies=("issue_refund",),
+    acceptable_strategies=(),
     resolution_summary="Contest with service completion proof. The service was delivered as booked.",
     base_weight=1.0,
     evidence_blueprints=(

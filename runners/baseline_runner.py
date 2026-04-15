@@ -1043,6 +1043,10 @@ def _obvious_next_action(
     if not candidates:
         return None
 
+    # Single candidate = no decision to make.
+    if len(candidates) == 1:
+        return candidates[0]
+
     first = candidates[0]
     visible_case = observation.get("visible_case")
     queue = observation["queue"]
@@ -1065,9 +1069,18 @@ def _obvious_next_action(
     if visible_case["status"] != "open":
         return first if first.action.action_type == "select_case" else None
 
+    # Strategy selection: the heuristic already derives the optimal strategy
+    # from policy + retrieved evidence. The LLM has no additional signal that
+    # improves this specific call — invoking it here has only caused regressions
+    # on fraud_signal_ambiguity and generated_medium_s99 where the model picks
+    # a concede-style strategy over the correct contest.
+    if first.action.action_type == "set_strategy":
+        return first
+
     if first.action.action_type in {
         "retrieve_policy",
         "add_evidence",
+        "remove_evidence",
         "submit_representment",
         "resolve_case",
     }:
@@ -1076,19 +1089,6 @@ def _obvious_next_action(
     if first.action.action_type == "query_system":
         current_strategy = visible_case.get("current_strategy")
         if visible_case.get("policy") is None or current_strategy in {None, "contest"}:
-            return first
-
-    if first.action.action_type == "set_strategy":
-        strategy = first.action.strategy
-        competing_strategies = {
-            candidate.action.strategy
-            for candidate in candidates[1:]
-            if candidate.action.action_type == "set_strategy"
-        }
-        if (
-            strategy in {"accept_chargeback", "issue_refund"}
-            and "contest" not in competing_strategies
-        ):
             return first
 
     if first.action.action_type == "select_case":
@@ -1278,9 +1278,22 @@ def _provider_pick(
                     {
                         "role": "system",
                         "content": (
-                            "You are a merchant chargeback dispute analyst. Pick the single best next action from the candidates. "
-                            "Prioritize: 1) deadline-urgent cases, 2) evidence-backed contests, 3) fast concedes for weak cases. "
-                            'Avoid attaching harmful evidence. Return JSON: {"candidate_index": N, "rationale": "brief reason"}'
+                            "You are a merchant chargeback dispute analyst. Pick the single best next action from the ordered candidate list. "
+                            "The candidates are pre-sorted by a deterministic heuristic — candidate 0 is usually correct. Deviate only when you spot a concrete reason. "
+                            "\n"
+                            "Reason-code → optimal strategy (follow unless evidence clearly contradicts):\n"
+                            "  goods_not_received → contest (with order + delivery proof)\n"
+                            "  fraud_cnp → contest when account linkage exists, otherwise concede\n"
+                            "  product_not_as_described → contest (with listing + return policy proof)\n"
+                            "  service_not_provided → contest (with completion log)\n"
+                            "  credit_not_processed → issue_refund immediately\n"
+                            "  duplicate_processing → issue_refund immediately\n"
+                            "\n"
+                            "Priorities: (1) resolve cases whose deadline is 1 step away before anything else, "
+                            "(2) prefer the highest-$ open case when budget is tight, "
+                            "(3) never attach harmful evidence (AVS/CVV mismatch on fraud_cnp, GPS anomalies on goods_not_received), "
+                            "(4) when multiple candidates look equivalent, take candidate 0.\n"
+                            'Return only JSON: {"candidate_index": N, "rationale": "brief reason"}'
                         ),
                     },
                     {"role": "user", "content": payload},

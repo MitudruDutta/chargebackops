@@ -258,7 +258,7 @@ TASKS: dict[str, TaskScenario] = {
                 ),
                 deadline_step=7,
                 optimal_strategy="contest",
-                acceptable_strategies=("accept_chargeback",),
+                acceptable_strategies=(),
                 policy_guidance=(
                     "For CNP fraud disputes, contest only when you can link the cardholder to the account or device history. "
                     "Do not attach evidence that strengthens the issuer's fraud narrative."
@@ -268,7 +268,7 @@ TASKS: dict[str, TaskScenario] = {
                     "customer account confirmation",
                 ),
                 recommended_strategy="contest",
-                resolution_summary="Contest only with strong account-linkage evidence. Conceding is acceptable but suboptimal.",
+                resolution_summary="Contest with strong account-linkage evidence. Conceding this case forfeits defensible revenue.",
                 weight=1.1,
                 required_evidence_ids=("M1-PRIOR-ORDERS", "M1-ACCOUNT-CHAT"),
                 helpful_evidence_ids=(
