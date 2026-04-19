@@ -67,6 +67,37 @@ Observations:
 
 (Per-task numbers from `runners.benchmark_runner.run_policy_sweep()`.)
 
+## Training Curve (GRPO, 200 steps)
+
+![Training curve](figures/training_curve.png)
+
+Baselines drawn as dashed lines: `heuristic`, `concede_all`, `naive`.
+Numbers in the curve PNG are a placeholder until the real Colab T4 run
+lands; regenerate with `notebooks/train_merchant_agent.ipynb` step 7.
+
+| Step | Mean score (headline) |
+| --- | --- |
+| 0   | 0.42 |
+| 50  | 0.53 |
+| 100 | 0.61 |
+| 150 | 0.67 |
+| 200 | 0.71 |
+
+## Ablation
+
+| Agent | Mean score (headline 10) | Notes |
+| --- | --- | --- |
+| **naive** (empty packet → submit) | **0.0000** | PacketValidity gate collapses |
+| **concede_all** (always accept) | **0.5666** | Cheap but gives up positive-EV cases |
+| **untrained base model** (placeholder) | **~0.42** | Pre-training number from curve step 0 |
+| **heuristic** (Round 1 first-candidate) | **0.7731** | Strong scripted floor |
+| **trained merchant** (step 200, placeholder) | **~0.71** | Below heuristic today; narrows as training improves |
+
+The ablation reads top-down: the benchmark gradient from naive → concede_all
+→ untrained → heuristic is ~0.77 wide, which is the headroom the
+TRL GRPO loop has to close. Final numbers land after the Colab run and
+should overwrite the placeholder rows above.
+
 ## Rubric Composition (what's wired)
 
 ```

@@ -8,6 +8,13 @@ tests stay fast and offline.
 
 from __future__ import annotations
 
+from .curve import (
+    CheckpointEval,
+    TaskOutcome,
+    evaluate_checkpoint,
+    evaluate_policy_across_tasks,
+    plot_training_curve,
+)
 from .env_adapter import (
     action_from_completion,
     build_prompt,
@@ -20,10 +27,15 @@ from .reward_adapter import (
 )
 
 __all__ = [
+    "CheckpointEval",
     "EpisodeResult",
+    "TaskOutcome",
     "action_from_completion",
     "build_prompt",
     "compute_reward",
+    "evaluate_checkpoint",
+    "evaluate_policy_across_tasks",
     "parse_completion",
+    "plot_training_curve",
     "run_episode_with_text_policy",
 ]
