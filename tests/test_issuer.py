@@ -1,4 +1,4 @@
-"""Unit tests for the scripted IssuerAgent (PRD §4.1).
+"""Unit tests for the scripted IssuerAgent
 
 Each test pins one branch of the deterministic decision matrix so a regression
 in `evidence_strength_score` or the round-1 / round-2 thresholds shows up

@@ -1,12 +1,12 @@
-"""Scripted Issuer agent for ChargebackOps v2 multi-round dispute lifecycle.
+"""Scripted Issuer agent for ChargebackOps multi-round dispute lifecycle.
 
 The Issuer reviews a merchant's representment packet and decides whether to
-accept it, request more evidence (triggering pre-arbitration / round 2), or
+accept it, request more evidence (triggering pre-arbitration ), or
 escalate to network arbitration. The decision is **deterministic** by default —
 benchmarks must be reproducible — with optional LLM softening reserved for the
 Day 4 milestone.
 
-Decision rule (PRD §4.1):
+Decision rule:
 
 1. Compute ``evidence_strength_score`` in [0, 1] from the attached packet.
 2. Round 1 cutoffs:
@@ -53,7 +53,7 @@ class IssuerReview:
     used_llm_softening: bool = False
 
 
-# Deterministic decision band edges (PRD §4.1).
+# Deterministic decision band edges 
 ROUND1_ACCEPT_THRESHOLD: float = 0.7
 ROUND1_REJECT_THRESHOLD: float = 0.4
 ROUND1_MIDPOINT_FALLBACK: float = 0.55

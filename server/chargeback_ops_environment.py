@@ -23,7 +23,13 @@ try:
         PolicyView,
         VisibleCase,
     )
-    from ..scenarios.issuer_model import IssuerAgent, IssuerDecision
+    from ..scenarios.arbitration import (
+        ARB_FEE_PER_SIDE,
+        ArbitrationOutcome,
+        ArbitrationRuling,
+        arbitration_ruling,
+    )
+    from ..scenarios.issuer_model import IssuerAgent, IssuerDecision, IssuerReview
     from ..scenarios.simulation import (
         ActionRecord,
         CaseProgress,
@@ -45,7 +51,13 @@ except ImportError:  # pragma: no cover
         PolicyView,
         VisibleCase,
     )
-    from scenarios.issuer_model import IssuerAgent, IssuerDecision
+    from scenarios.arbitration import (
+        ARB_FEE_PER_SIDE,
+        ArbitrationOutcome,
+        ArbitrationRuling,
+        arbitration_ruling,
+    )
+    from scenarios.issuer_model import IssuerAgent, IssuerDecision, IssuerReview
     from scenarios.simulation import ActionRecord, CaseProgress, InternalCase, get_task
 
 
@@ -213,15 +225,16 @@ class ChargebackOpsEnvironment(
             return self._submit_representment(case, note=action.note)
         if action.action_type == "resolve_case":
             return self._resolve_case(case, action.strategy)
-        # v2 multi-round actions — full logic lands on Day 2 (PRD §4.5).
-        if action.action_type in (
-            "respond_to_pre_arb",
-            "escalate_to_arbitration",
-            "accept_arbitration_loss",
-        ):
-            raise ValueError(
-                f"Action '{action.action_type}' is registered but not yet wired (Day 2)."
+        if action.action_type == "respond_to_pre_arb":
+            return self._respond_to_pre_arb(
+                case,
+                compelling_evidence_ids=action.compelling_evidence_ids,
+                note=action.note,
             )
+        if action.action_type == "escalate_to_arbitration":
+            return self._escalate_to_arbitration(case)
+        if action.action_type == "accept_arbitration_loss":
+            return self._accept_arbitration_loss(case)
         raise ValueError(f"Unsupported action_type '{action.action_type}'.")
 
     def _select_case(self, case_id: str | None) -> tuple[float, str]:
@@ -402,13 +415,13 @@ class ChargebackOpsEnvironment(
             )
 
         # v2: hand off to scripted Issuer instead of unconditionally terminating.
-        review = self._issuer_agent.decide_review(case, progress, round_number=1)
-        progress.issuer_decisions.append(review.decision.value)
+        review = self._invoke_issuer_review(case, progress, round_number=1)
 
         if review.decision == IssuerDecision.ACCEPT:
             progress.final_resolution = "contest"
             progress.resolution_status = "won"
             progress.resolved_at_step = self._state.step_count
+            progress.final_economic_outcome = case.amount
             return (
                 0.45,
                 f"Issuer accepted representment for case {case.case_id} "
@@ -432,6 +445,161 @@ class ChargebackOpsEnvironment(
             -0.12,
             f"Issuer escalated case {case.case_id} unexpectedly. {review.rationale}",
         )
+
+    def _invoke_issuer_review(
+        self,
+        case: InternalCase,
+        progress: CaseProgress,
+        *,
+        round_number: int,
+    ) -> IssuerReview:
+        """Shared helper that calls the scripted Issuer and records the decision."""
+
+        review = self._issuer_agent.decide_review(case, progress, round_number=round_number)
+        progress.issuer_decisions.append(review.decision.value)
+        return review
+
+    def _respond_to_pre_arb(
+        self,
+        case: InternalCase,
+        *,
+        compelling_evidence_ids: list[str],
+        note: str | None = None,
+    ) -> tuple[float, str]:
+        """handler: attach compelling evidence and re-invoke the Issuer."""
+
+        progress = self._progress_by_case[case.case_id]
+        if progress.round_number != 2:
+            raise ValueError(
+                "respond_to_pre_arb is only valid after the Issuer requests more evidence."
+            )
+        if progress.resolution_status != "open":
+            return -0.05, f"Case {case.case_id} is already resolved."
+        if not compelling_evidence_ids:
+            raise ValueError(
+                "respond_to_pre_arb requires at least one compelling_evidence_id."
+            )
+
+        if note:
+            progress.representment_note = note
+
+        all_evidence = self._evidence_map(case)
+        added: list[str] = []
+        reward = 0.0
+        for evidence_id in compelling_evidence_ids:
+            if evidence_id not in all_evidence:
+                reward -= 0.04
+                continue
+            if evidence_id in progress.attached_evidence_ids:
+                reward -= 0.02
+                continue
+            # Retrieve it lazily if the agent points at a known system-sourced id.
+            progress.retrieved_evidence_ids.add(evidence_id)
+            progress.attached_evidence_ids.append(evidence_id)
+            progress.pre_arb_evidence_added.append(evidence_id)
+            added.append(evidence_id)
+            evidence = all_evidence[evidence_id]
+            if evidence.helpful:
+                reward += 0.06
+            elif evidence.harmful:
+                reward -= 0.1
+            else:
+                reward += 0.01
+
+        review = self._invoke_issuer_review(case, progress, round_number=2)
+
+        if review.decision == IssuerDecision.ACCEPT:
+            progress.final_resolution = "contest"
+            progress.resolution_status = "won_pre_arb"
+            progress.resolved_at_step = self._state.step_count
+            progress.final_economic_outcome = case.amount
+            return (
+                reward + 0.35,
+                f"Issuer accepted pre-arbitration packet for case {case.case_id} "
+                f"(score {review.evidence_strength_score:.2f}, added "
+                f"{', '.join(added) or 'no new'}). {review.rationale}",
+            )
+
+        # ESCALATE_TO_ARBITRATION — issuer files network arbitration.
+        ruling = self._apply_arbitration(case, progress)
+        return (
+            reward + self._arbitration_reward(ruling),
+            f"Issuer escalated case {case.case_id} to arbitration "
+            f"(score {review.evidence_strength_score:.2f}). {ruling.rationale}",
+        )
+
+    def _escalate_to_arbitration(self, case: InternalCase) -> tuple[float, str]:
+        """handler: merchant voluntarily files for arbitration."""
+
+        progress = self._progress_by_case[case.case_id]
+        if progress.round_number != 2:
+            raise ValueError(
+                "escalate_to_arbitration is only valid after a pre-arbitration round."
+            )
+        if progress.resolution_status != "open":
+            return -0.05, f"Case {case.case_id} is already resolved."
+
+        ruling = self._apply_arbitration(case, progress)
+        return (
+            self._arbitration_reward(ruling),
+            f"Merchant escalated case {case.case_id} to network arbitration. "
+            f"{ruling.rationale}",
+        )
+
+    def _accept_arbitration_loss(self, case: InternalCase) -> tuple[float, str]:
+        """handler: merchant concedes rather than pay the arbitration fee."""
+
+        progress = self._progress_by_case[case.case_id]
+        if progress.round_number != 2:
+            raise ValueError(
+                "accept_arbitration_loss is only valid after a pre-arbitration round."
+            )
+        if progress.resolution_status != "open":
+            return -0.05, f"Case {case.case_id} is already resolved."
+
+        progress.final_resolution = "accept_arbitration_loss"
+        progress.resolution_status = "conceded_pre_arb"
+        progress.resolved_at_step = self._state.step_count
+        progress.arbitration_outcome = None
+        progress.arb_fees_paid = 0.0
+        progress.final_economic_outcome = -case.amount
+        return (
+            -0.1,
+            f"Merchant accepted arbitration loss on case {case.case_id}; "
+            f"no arb fee paid but the $"
+            f"{case.amount:.2f} dispute amount is forfeited.",
+        )
+
+    def _apply_arbitration(
+        self, case: InternalCase, progress: CaseProgress
+    ) -> ArbitrationRuling:
+        """Run the deterministic arbitration rule and record its economic impact."""
+
+        ruling = arbitration_ruling(case, progress)
+        progress.round_number = 3
+        progress.arbitration_outcome = ruling.outcome.value
+        progress.arb_fees_paid = ruling.arb_fee_per_side
+        progress.final_economic_outcome = ruling.merchant_net_pnl
+        progress.final_resolution = "contest"
+        progress.resolved_at_step = self._state.step_count
+        if ruling.outcome == ArbitrationOutcome.MERCHANT_WINS:
+            progress.resolution_status = "won_arbitration"
+        else:
+            progress.resolution_status = "lost_arbitration"
+        return ruling
+
+    @staticmethod
+    def _arbitration_reward(ruling: ArbitrationRuling) -> float:
+        """Map an arbitration ruling to a step reward.
+
+        Winning arbitration is worth more than winning round 1 because it
+        clears a harder bar; losing stings more because both the fee and the
+        disputed amount are gone.
+        """
+
+        if ruling.outcome == ArbitrationOutcome.MERCHANT_WINS:
+            return 0.55
+        return -0.35
 
     def _resolve_case(
         self,
@@ -699,6 +867,19 @@ class ChargebackOpsEnvironment(
         case_progress = self._progress_by_case[self._selected_case_id]
         if case_progress.resolution_status != "open":
             return ["select_case"]
+        if case_progress.round_number == 2:
+            # Pre-arbitration: investigation actions still help (e.g. to pull
+            # compelling evidence from a system) but the round-1 submit path is
+            # closed off in favour of the three terminal v2 actions.
+            return base + [
+                "query_system",
+                "retrieve_policy",
+                "add_evidence",
+                "remove_evidence",
+                "respond_to_pre_arb",
+                "escalate_to_arbitration",
+                "accept_arbitration_loss",
+            ]
         return base + [
             "inspect_case",
             "query_system",

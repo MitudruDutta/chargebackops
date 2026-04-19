@@ -77,6 +77,7 @@ def score_case(
         efficiency=round(dims["efficiency"], 4),
         outcome_quality=round(dims["outcome_quality"], 4),
         note_quality=round(dims["note_quality"], 4),
+        escalation_roi=round(dims["escalation_roi"], 4),
         weighted_score=round(weighted * case.weight, 4),
         final_resolution=progress.final_resolution or "unresolved",
         notes=_build_case_notes(case, progress, step_count),

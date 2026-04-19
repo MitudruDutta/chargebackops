@@ -30,11 +30,11 @@ def test_environment_exposes_rubric_tree():
     expected = {
         "case_rubric",
         "case_rubric.aggregator",
-        *(f"case_rubric.aggregator.rubric_{i}" for i in range(7)),
+        *(f"case_rubric.aggregator.rubric_{i}" for i in range(8)),
     }
     assert expected.issubset(names)
 
     # Weights must sum to 1.0 (WeightedSum enforces this at construction but
     # we lock the constant here so weight changes stay intentional).
     assert abs(sum(CASE_DIMENSION_WEIGHTS) - 1.0) < 1e-6
-    assert len(CASE_DIMENSION_WEIGHTS) == 7
+    assert len(CASE_DIMENSION_WEIGHTS) == 8

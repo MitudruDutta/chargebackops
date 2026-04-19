@@ -21,8 +21,20 @@ from typing import Any
 from openenv.core.rubrics import Gate, Rubric, WeightedSum
 
 try:
+    from ..scenarios.arbitration import (
+        ARB_FEE_PER_SIDE,
+        ARB_ISSUER_WIN_THRESHOLD,
+        ARB_MERCHANT_WIN_THRESHOLD,
+    )
+    from ..scenarios.issuer_model import evidence_strength_score
     from ..scenarios.simulation import CaseProgress, InternalCase, TaskScenario
 except ImportError:  # pragma: no cover
+    from scenarios.arbitration import (
+        ARB_FEE_PER_SIDE,
+        ARB_ISSUER_WIN_THRESHOLD,
+        ARB_MERCHANT_WIN_THRESHOLD,
+    )
+    from scenarios.issuer_model import evidence_strength_score
     from scenarios.simulation import CaseProgress, InternalCase, TaskScenario
 
 
@@ -250,6 +262,57 @@ class OutcomeQualityRubric(Rubric):
         return 0.0
 
 
+def _probability_of_merchant_win(score: float) -> float:
+    """Map evidence strength to arbitration win probability.
+
+    Mirrors the deterministic arbitration ruling: strong packets always win,
+    weak packets always lose, the ambiguity band is a 50/50 coin flip.
+    """
+
+    if score >= ARB_MERCHANT_WIN_THRESHOLD:
+        return 1.0
+    if score <= ARB_ISSUER_WIN_THRESHOLD:
+        return 0.0
+    return 0.5
+
+
+class EscalationROIRubric(Rubric):
+    """Score the merchant's escalate-vs-concede decision on expected value.
+
+    Escalation is rational iff ``P(win) * dispute_amount > arb_fee`` — the
+    arbitration fee is paid by both sides regardless, so the merchant should
+    only pay it when the expected recovered dispute amount exceeds the fee.
+
+    Dimension is vacuous (full credit) for cases that never entered
+    pre-arbitration, since no escalation decision was taken.
+    """
+
+    def forward(self, action: Any, observation: Any) -> float:
+        ctx: GradingContext = action
+        case = ctx.case
+        progress = ctx.progress
+
+        if progress.round_number < 2 and progress.arbitration_outcome is None:
+            return 1.0
+
+        score = evidence_strength_score(case, progress)
+        p_win = _probability_of_merchant_win(score)
+        expected_recovery = p_win * case.amount
+        escalate_is_positive_ev = expected_recovery > ARB_FEE_PER_SIDE
+
+        status = progress.resolution_status
+        if status == "won_pre_arb":
+            return 1.0
+
+        if status == "conceded_pre_arb":
+            return 0.0 if escalate_is_positive_ev else 1.0
+
+        if progress.arbitration_outcome is not None:
+            return 1.0 if escalate_is_positive_ev else 0.0
+
+        return 0.5
+
+
 class NoteQualityRubric(Rubric):
     """Text-based representment note scorer (contest-only)."""
 
@@ -342,7 +405,16 @@ def grade_representment_note(
 
 
 # Weights must match the order of rubrics handed to WeightedSum and sum to 1.0.
-CASE_DIMENSION_WEIGHTS: tuple[float, ...] = (0.25, 0.20, 0.15, 0.15, 0.10, 0.10, 0.05)
+CASE_DIMENSION_WEIGHTS: tuple[float, ...] = (
+    0.20,
+    0.15,
+    0.10,
+    0.10,
+    0.10,
+    0.10,
+    0.05,
+    0.20,
+)
 CASE_DIMENSION_NAMES: tuple[str, ...] = (
     "strategy_correctness",
     "evidence_quality",
@@ -351,6 +423,7 @@ CASE_DIMENSION_NAMES: tuple[str, ...] = (
     "efficiency",
     "outcome_quality",
     "note_quality",
+    "escalation_roi",
 )
 
 
@@ -379,6 +452,7 @@ class CaseRubric(Rubric):
                 EfficiencyRubric(),
                 OutcomeQualityRubric(),
                 NoteQualityRubric(),
+                EscalationROIRubric(),
             ],
             weights=list(CASE_DIMENSION_WEIGHTS),
         )

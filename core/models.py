@@ -19,7 +19,7 @@ ActionType = Literal[
     "set_strategy",
     "submit_representment",
     "resolve_case",
-    # v2 multi-round dispute actions (PRD §4.3)
+    # multi-round dispute actions 
     "respond_to_pre_arb",
     "escalate_to_arbitration",
     "accept_arbitration_loss",
@@ -139,6 +139,7 @@ class CaseScoreBreakdown(BaseModel):
     efficiency: float
     outcome_quality: float
     note_quality: float = 0.0
+    escalation_roi: float = 1.0
     weighted_score: float
     final_resolution: str
     notes: str

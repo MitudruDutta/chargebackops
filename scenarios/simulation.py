@@ -85,7 +85,7 @@ class CaseProgress:
     deadline_penalized: bool = False
     notes: list[str] = field(default_factory=list)
     representment_note: str | None = None
-    # v2 multi-round dispute lifecycle (PRD §4.4)
+    # multi-round dispute lifecycle 
     round_number: int = 1
     issuer_decisions: list[str] = field(default_factory=list)
     pre_arb_evidence_added: list[str] = field(default_factory=list)
