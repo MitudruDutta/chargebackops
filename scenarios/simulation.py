@@ -51,6 +51,10 @@ class InternalCase:
     network_reason_code: str = ""
     response_window_days: int = 30
     compelling_evidence_category: str = ""
+    # Issuer-perceived complexity multiplier in (0, 1].
+    # Lower values dampen evidence_strength_score so harder cases land in the
+    # ambiguity band and exercise the multi-round dispute path.
+    dispute_complexity: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -85,9 +89,10 @@ class CaseProgress:
     deadline_penalized: bool = False
     notes: list[str] = field(default_factory=list)
     representment_note: str | None = None
-    # multi-round dispute lifecycle 
+    # multi-round dispute lifecycle
     round_number: int = 1
     issuer_decisions: list[str] = field(default_factory=list)
+    issuer_rationales: list[str] = field(default_factory=list)
     pre_arb_evidence_added: list[str] = field(default_factory=list)
     arbitration_outcome: str | None = None
     arb_fees_paid: float = 0.0
@@ -166,8 +171,7 @@ TASKS: dict[str, TaskScenario] = {
                 weight=1.0,
                 required_evidence_ids=("E1-ORDER-CONF", "E1-DELIVERY-SCAN"),
                 helpful_evidence_ids=(
-                    "E1-ORDER-CONF",
-                    "E1-DELIVERY-SCAN",
+                    "E1-SIGNATURE",
                     "E1-SUPPORT-ACK",
                 ),
                 harmful_evidence_ids=(),
@@ -279,9 +283,9 @@ TASKS: dict[str, TaskScenario] = {
                 weight=1.1,
                 required_evidence_ids=("M1-PRIOR-ORDERS", "M1-ACCOUNT-CHAT"),
                 helpful_evidence_ids=(
-                    "M1-PRIOR-ORDERS",
-                    "M1-ACCOUNT-CHAT",
                     "M1-DELIVERY",
+                    "M1-ORDER",
+                    "M1-VELOCITY",
                 ),
                 harmful_evidence_ids=("M1-AVS-MISMATCH", "M1-CVV-MISMATCH"),
                 card_network="visa",
@@ -377,7 +381,7 @@ TASKS: dict[str, TaskScenario] = {
             "A real operations queue with three disputes. Two should be actioned quickly, and one should be conceded. "
             "The step budget leaves little room for waste."
         ),
-        max_steps=15,
+        max_steps=18,
         cases=(
             InternalCase(
                 case_id="CB-H1",
@@ -390,7 +394,7 @@ TASKS: dict[str, TaskScenario] = {
                 inspection_notes=(
                     "Carrier stored both a delivery scan and signature. This is the highest-value recoverable case in the queue."
                 ),
-                deadline_step=7,
+                deadline_step=14,
                 optimal_strategy="contest",
                 acceptable_strategies=(),
                 policy_guidance=(
@@ -405,8 +409,6 @@ TASKS: dict[str, TaskScenario] = {
                 weight=1.7,
                 required_evidence_ids=("H1-ORDER-CONF", "H1-SIGNATURE"),
                 helpful_evidence_ids=(
-                    "H1-ORDER-CONF",
-                    "H1-SIGNATURE",
                     "H1-DELIVERY-SCAN",
                 ),
                 harmful_evidence_ids=(),
@@ -414,6 +416,7 @@ TASKS: dict[str, TaskScenario] = {
                 network_reason_code="4855",
                 response_window_days=45,
                 compelling_evidence_category="Goods or Services Not Provided",
+                dispute_complexity=0.60,
                 evidence_by_system={
                     "orders": (
                         _ev(
@@ -636,6 +639,124 @@ TASKS: dict[str, TaskScenario] = {
             ),
         ),
     ),
+    "pre_arb_recovery_medium": TaskScenario(
+        task_id="pre_arb_recovery_medium",
+        title="Pre-Arbitration Recovery",
+        difficulty="medium",
+        objective=(
+            "Win a goods-not-received dispute that requires recovering compelling "
+            "evidence in round 2 instead of burning $250 on arbitration."
+        ),
+        description=(
+            "Required evidence is split across orders and support. A round-1 packet "
+            "from the default systems will fall short and the issuer will request "
+            "compelling evidence. Querying support in round 2 unlocks the missing "
+            "proof; jumping straight to arbitration concedes a $250 fee on a "
+            "packet the issuer would have accepted."
+        ),
+        max_steps=12,
+        cases=(
+            InternalCase(
+                case_id="CB-P1",
+                order_id="ORD-7710",
+                customer_id="CUST-3300",
+                amount=700.0,
+                currency="USD",
+                reason_code="goods_not_received",
+                summary=(
+                    "Customer denies receipt of a $700 electronics order. "
+                    "Authenticated support transcript proves delivery acknowledgement."
+                ),
+                inspection_notes=(
+                    "The order was delivered, but the strongest acknowledgement lives "
+                    "in the support transcript — not in the orders or shipping system. "
+                    "A first-pass packet will be missing required evidence."
+                ),
+                deadline_step=10,
+                optimal_strategy="contest",
+                acceptable_strategies=(),
+                policy_guidance=(
+                    "Goods-not-received disputes need order confirmation plus a "
+                    "delivery acknowledgement. If the support transcript is the only "
+                    "delivery acknowledgement, attach it through the pre-arbitration "
+                    "response — do not skip straight to arbitration."
+                ),
+                policy_requirements=(
+                    "order confirmation",
+                    "support delivery acknowledgement",
+                ),
+                recommended_strategy="contest",
+                resolution_summary=(
+                    "Recover the support acknowledgement in pre-arb. Escalating to "
+                    "arbitration without it forfeits $250 on a winnable case."
+                ),
+                weight=1.3,
+                required_evidence_ids=("P1-ORDER-CONF", "P1-SUPPORT-CONF"),
+                helpful_evidence_ids=("P1-DELIVERY-SCAN", "P1-RISK-CLEAR"),
+                harmful_evidence_ids=(),
+                card_network="visa",
+                network_reason_code="13.1",
+                response_window_days=30,
+                compelling_evidence_category="CE 3.5 — Merchandise Not Received",
+                evidence_by_system={
+                    "orders": (
+                        _ev(
+                            "P1-ORDER-CONF",
+                            "orders",
+                            "Order confirmation",
+                            "Order receipt with billed customer, shipping address, and SKU.",
+                            helpful=True,
+                            required=True,
+                        ),
+                    ),
+                    "payment": (
+                        _ev(
+                            "P1-AUTH",
+                            "payment",
+                            "Authorization capture",
+                            "Authorization approved and captured cleanly.",
+                        ),
+                    ),
+                    "shipping": (
+                        _ev(
+                            "P1-DELIVERY-SCAN",
+                            "shipping",
+                            "Carrier delivery scan",
+                            "Carrier tracking shows the package delivered to the saved address.",
+                            helpful=True,
+                        ),
+                    ),
+                    "support": (
+                        _ev(
+                            "P1-SUPPORT-CONF",
+                            "support",
+                            "Authenticated support acknowledgement",
+                            "Customer logged in and confirmed receipt of the package in chat the next day.",
+                            helpful=True,
+                            required=True,
+                        ),
+                    ),
+                    "refunds": (
+                        _ev(
+                            "P1-NO-REFUND",
+                            "refunds",
+                            "Refund ledger",
+                            "No refund or goodwill credit was issued before the dispute opened.",
+                        ),
+                    ),
+                    "risk": (
+                        _ev(
+                            "P1-RISK-CLEAR",
+                            "risk",
+                            "Risk summary",
+                            "Account has clean device fingerprint and prior fulfilled orders.",
+                            helpful=True,
+                        ),
+                    ),
+                },
+            ),
+        ),
+    ),
 }
 
 
@@ -723,6 +844,7 @@ def list_tasks() -> list[TaskScenario]:
         for task_id in [
             "goods_not_received_easy",
             "fraud_signal_ambiguity",
+            "pre_arb_recovery_medium",
             "queue_optimization_hard",
         ]
     ]

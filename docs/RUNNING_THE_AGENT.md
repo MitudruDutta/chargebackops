@@ -87,7 +87,7 @@ OPENAI_API_KEY=sk-...
 
 ```env
 BASELINE_PROVIDER=google
-BASELINE_MODEL=gemini-2.0-flash-exp
+BASELINE_MODEL=gemini-2.5-flash
 GOOGLE_API_KEY=AI...
 ```
 

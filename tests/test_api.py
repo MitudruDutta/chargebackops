@@ -61,9 +61,21 @@ def test_grader_endpoint_after_completed_episode():
     )
     env.step(
         ChargebackOpsAction(
+            action_type="query_system",
+            case_id="CB-E1",
+            system_name="support",
+        )
+    )
+    env.step(
+        ChargebackOpsAction(
             action_type="add_evidence",
             case_id="CB-E1",
-            evidence_ids=["E1-ORDER-CONF", "E1-DELIVERY-SCAN"],
+            evidence_ids=[
+                "E1-ORDER-CONF",
+                "E1-DELIVERY-SCAN",
+                "E1-SIGNATURE",
+                "E1-SUPPORT-ACK",
+            ],
         )
     )
     env.step(

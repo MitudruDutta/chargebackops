@@ -388,9 +388,6 @@ class ChargebackOpsEnvironment(
         if progress.resolution_status != "open":
             return -0.05, f"Case {case.case_id} is already resolved."
 
-        attached = set(progress.attached_evidence_ids)
-        missing = set(case.required_evidence_ids).difference(attached)
-        harmful = set(case.harmful_evidence_ids).intersection(attached)
         if self._state.step_count > case.deadline_step:
             progress.final_resolution = "contest"
             progress.resolution_status = "lost_late"
@@ -399,22 +396,12 @@ class ChargebackOpsEnvironment(
                 -0.2,
                 f"Representment for case {case.case_id} was submitted after the deadline.",
             )
-        if missing:
-            progress.final_resolution = "contest"
-            progress.resolution_status = "lost_incomplete"
-            progress.resolved_at_step = self._state.step_count
-            return -0.18, (
-                f"Representment for case {case.case_id} is incomplete; missing {', '.join(sorted(missing))}."
-            )
-        if harmful:
-            progress.final_resolution = "contest"
-            progress.resolution_status = "lost_harmful_evidence"
-            progress.resolved_at_step = self._state.step_count
-            return -0.15, (
-                f"Representment for case {case.case_id} included harmful evidence {', '.join(sorted(harmful))}."
-            )
 
-        # v2: hand off to scripted Issuer instead of unconditionally terminating.
+        # Every on-time packet is handed to the scripted Issuer. Missing
+        # required evidence and attached harmful evidence are not terminal —
+        # they push the score down so the Issuer requests more evidence
+        # (round 2) or escalates to arbitration (round 3), exercising the
+        # multi-round dispute path the rubric is built for.
         review = self._invoke_issuer_review(case, progress, round_number=1)
 
         if review.decision == IssuerDecision.ACCEPT:
@@ -457,6 +444,7 @@ class ChargebackOpsEnvironment(
 
         review = self._issuer_agent.decide_review(case, progress, round_number=round_number)
         progress.issuer_decisions.append(review.decision.value)
+        progress.issuer_rationales.append(review.rationale)
         return review
 
     def _respond_to_pre_arb(
@@ -856,6 +844,17 @@ class ChargebackOpsEnvironment(
             submission_status=progress.resolution_status
             if progress.resolution_status != "open"
             else None,
+            round_number=progress.round_number,
+            last_issuer_decision=(
+                progress.issuer_decisions[-1] if progress.issuer_decisions else None
+            ),
+            last_issuer_rationale=(
+                progress.issuer_rationales[-1] if progress.issuer_rationales else None
+            ),
+            pre_arb_evidence_added=list(progress.pre_arb_evidence_added),
+            arbitration_outcome=progress.arbitration_outcome,
+            arb_fees_paid=progress.arb_fees_paid,
+            final_economic_outcome=progress.final_economic_outcome,
         )
 
     def _build_available_actions(self) -> list[str]:
@@ -869,8 +868,8 @@ class ChargebackOpsEnvironment(
             return ["select_case"]
         if case_progress.round_number == 2:
             # Pre-arbitration: investigation actions still help (e.g. to pull
-            # compelling evidence from a system) but the round-1 submit path is
-            # closed off in favour of the three terminal v2 actions.
+            # compelling evidence from a system) but the round-1 submit path
+            # is closed off in favour of the three terminal pre-arb actions.
             return base + [
                 "query_system",
                 "retrieve_policy",

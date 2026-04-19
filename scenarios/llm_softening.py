@@ -44,7 +44,7 @@ _PROVIDER_CHAIN: tuple[tuple[str, str, str, str], ...] = (
         "google",
         "https://generativelanguage.googleapis.com/v1beta/openai/",
         "GOOGLE_API_KEY",
-        "gemini-1.5-flash",
+        "gemini-2.5-flash",
     ),
     (
         "groq",

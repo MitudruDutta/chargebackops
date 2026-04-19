@@ -32,8 +32,10 @@ def _progress(attached: list[str]) -> CaseProgress:
 
 
 def test_merchant_wins_on_strong_packet():
-    """Score 0.8 clears the 0.65 bar → MERCHANT_WINS, merchant keeps amount − fee."""
-    progress = _progress(["E1-ORDER-CONF", "E1-DELIVERY-SCAN"])
+    """Required + 2 helpful → score 0.8 clears the 0.65 bar → MERCHANT_WINS."""
+    progress = _progress(
+        ["E1-ORDER-CONF", "E1-DELIVERY-SCAN", "E1-SIGNATURE", "E1-SUPPORT-ACK"]
+    )
     ruling = arbitration_ruling(_CASE, progress)
     assert ruling.evidence_strength_score >= ARB_MERCHANT_WIN_THRESHOLD
     assert ruling.outcome == ArbitrationOutcome.MERCHANT_WINS
@@ -53,7 +55,7 @@ def test_issuer_wins_on_empty_packet():
 def test_ambiguity_band_uses_deterministic_coin_flip():
     """Scores in (0.35, 0.65) map to a case_id-keyed coin flip — reproducible."""
     # Two helpful-only evidence ids → 0.4 band score, no required subset.
-    progress = _progress(["E1-DELIVERY-SCAN", "E1-SUPPORT-ACK"])
+    progress = _progress(["E1-SIGNATURE", "E1-SUPPORT-ACK"])
     r1 = arbitration_ruling(_CASE, progress)
     r2 = arbitration_ruling(_CASE, progress)
     assert r1.outcome == r2.outcome
@@ -78,7 +80,9 @@ def test_coin_flip_varies_across_case_ids():
 
 def test_ruling_is_pure():
     """Same inputs, same outputs — required for reproducible benchmarks."""
-    progress = _progress(["E1-ORDER-CONF", "E1-DELIVERY-SCAN"])
+    progress = _progress(
+        ["E1-ORDER-CONF", "E1-DELIVERY-SCAN", "E1-SIGNATURE", "E1-SUPPORT-ACK"]
+    )
     r1 = arbitration_ruling(_CASE, progress)
     r2 = arbitration_ruling(_CASE, progress)
     assert r1 == r2

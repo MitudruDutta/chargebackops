@@ -74,6 +74,27 @@ _CSS = """
 .color-yellow { color: #eab308; }
 .color-red { color: #ef4444; }
 .color-blue { color: #3b82f6; }
+
+.round-panel { border: 1px solid #3a3a3a; border-radius: 8px; padding: 12px 14px; margin: 8px 0; background: #1a1a1a; }
+.round-panel .panel-title { font-weight: 700; font-size: 13px; color: #ccc; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+.round-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; margin-right: 8px; }
+.round-1 { background: #1e3a8a; color: #93c5fd; }
+.round-2 { background: #78350f; color: #fcd34d; }
+.round-3 { background: #7f1d1d; color: #fca5a5; }
+.issuer-quote { font-style: italic; color: #d4d4d4; font-size: 13px; padding: 6px 10px; border-left: 3px solid #6366f1; margin: 6px 0; background: #15171f; }
+.issuer-decision { font-weight: 700; font-size: 13px; }
+.dec-accept { color: #22c55e; }
+.dec-request { color: #eab308; }
+.dec-escalate { color: #ef4444; }
+
+.arb-panel { border: 1px solid #7f1d1d; border-radius: 8px; padding: 12px 14px; margin: 8px 0; background: #1a0e0e; }
+.arb-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+.arb-row .arb-label { color: #999; }
+.arb-row .arb-value { font-weight: 700; }
+.outcome-merchant { color: #22c55e; }
+.outcome-issuer { color: #ef4444; }
+.pnl-pos { color: #22c55e; font-weight: 800; }
+.pnl-neg { color: #ef4444; font-weight: 800; }
 """
 
 
@@ -175,6 +196,76 @@ def _budget_html(steps_used: int, max_steps: int, score: float) -> str:
     """
 
 
+_DEC_CLASS = {
+    "accept": "dec-accept",
+    "request_more_evidence": "dec-request",
+    "escalate_to_arbitration": "dec-escalate",
+    "merchant_wins": "outcome-merchant",
+    "issuer_wins": "outcome-issuer",
+}
+
+
+def _round_panel_html(observation) -> str:
+    vc = observation.visible_case
+    if vc is None:
+        return ""
+
+    rnd = vc.round_number or 1
+    badge_cls = f"round-{min(rnd, 3)}"
+    rnd_label = {1: "Representment", 2: "Pre-Arbitration", 3: "Arbitration"}.get(rnd, f"Round {rnd}")
+
+    body = (
+        f'<div class="panel-title">'
+        f'<span class="round-badge {badge_cls}">R{rnd}</span>'
+        f'{rnd_label} &middot; case <b>{vc.case_id}</b>'
+        f'</div>'
+    )
+
+    if vc.last_issuer_decision:
+        dec = vc.last_issuer_decision
+        dec_cls = _DEC_CLASS.get(dec, "")
+        dec_pretty = dec.replace("_", " ").title()
+        body += f'<div class="issuer-decision {dec_cls}">Issuer: {dec_pretty}</div>'
+
+    if vc.last_issuer_rationale:
+        body += f'<div class="issuer-quote">&ldquo;{vc.last_issuer_rationale}&rdquo;</div>'
+
+    if vc.pre_arb_evidence_added:
+        ids = ", ".join(vc.pre_arb_evidence_added)
+        body += (
+            f'<div style="font-size:12px;color:#999;margin-top:4px;">'
+            f'Pre-arb evidence added: <code>{ids}</code></div>'
+        )
+
+    return f'<div class="round-panel">{body}</div>'
+
+
+def _arbitration_panel_html(observation) -> str:
+    vc = observation.visible_case
+    if vc is None or vc.arbitration_outcome is None:
+        return ""
+
+    outcome = vc.arbitration_outcome
+    outcome_cls = _DEC_CLASS.get(outcome, "")
+    outcome_label = outcome.replace("_", " ").title()
+    pnl = vc.final_economic_outcome
+    pnl_cls = "pnl-pos" if (pnl is not None and pnl >= 0) else "pnl-neg"
+    pnl_str = f"${pnl:+,.2f}" if pnl is not None else "n/a"
+    fees = vc.arb_fees_paid or 0.0
+
+    return (
+        f'<div class="arb-panel">'
+        f'<div class="panel-title"><span class="round-badge round-3">ARB</span>Arbitration Outcome</div>'
+        f'<div class="arb-row"><span class="arb-label">Ruling</span>'
+        f'<span class="arb-value {outcome_cls}">{outcome_label}</span></div>'
+        f'<div class="arb-row"><span class="arb-label">Arb fees paid</span>'
+        f'<span class="arb-value">${fees:,.2f}</span></div>'
+        f'<div class="arb-row"><span class="arb-label">Final P&amp;L</span>'
+        f'<span class="arb-value {pnl_cls}">{pnl_str}</span></div>'
+        f'</div>'
+    )
+
+
 def _grader_html(report: dict | None) -> str:
     if not report:
         return ""
@@ -191,13 +282,14 @@ def _grader_html(report: dict | None) -> str:
     )
 
     dims = [
-        ("Strategy", "strategy_correctness", "25%"),
-        ("Evidence", "evidence_quality", "20%"),
-        ("Packet", "packet_validity", "15%"),
-        ("Deadline", "deadline_compliance", "15%"),
+        ("Strategy", "strategy_correctness", "20%"),
+        ("Evidence", "evidence_quality", "15%"),
+        ("Packet", "packet_validity", "10%"),
+        ("Deadline", "deadline_compliance", "10%"),
         ("Efficiency", "efficiency", "10%"),
         ("Outcome", "outcome_quality", "10%"),
         ("Note", "note_quality", "5%"),
+        ("Esc ROI", "escalation_roi", "20%"),
     ]
 
     for case in report.get("case_reports", []):
@@ -259,6 +351,8 @@ def run_episode(
         _queue_html(obs),
         _budget_html(0, max_steps, 0.0),
         [row[:] for row in rows],
+        _round_panel_html(obs),
+        _arbitration_panel_html(obs),
         "",
         None,
     )
@@ -302,6 +396,8 @@ def run_episode(
             _queue_html(obs),
             _budget_html(step, max_steps, obs.progress_score),
             [row[:] for row in rows],
+            _round_panel_html(obs),
+            _arbitration_panel_html(obs),
             grader,
             None,
         )
@@ -314,6 +410,8 @@ def run_episode(
         _queue_html(obs),
         _budget_html(step, max_steps, obs.progress_score),
         [row[:] for row in rows],
+        _round_panel_html(obs),
+        _arbitration_panel_html(obs),
         _grader_html(report),
         report,
     )
@@ -370,7 +468,8 @@ def build_demo() -> gr.Blocks:
 
                 md_status = gr.Markdown(
                     "Pick a task + policy and click **Run Episode**. Compare **Heuristic** vs "
-                    "**Naive** to see how the 7-dimension rubric separates a real agent from a lazy one."
+                    "**Naive** to see how the 8-dimension rubric &mdash; including escalation ROI &mdash; "
+                    "separates an EV-rational agent from a lazy one."
                 )
 
                 with gr.Row(equal_height=True):
@@ -395,6 +494,12 @@ def build_demo() -> gr.Blocks:
                     label="Step Trace",
                 )
 
+                with gr.Row(equal_height=True):
+                    with gr.Column(scale=1):
+                        html_round = gr.HTML(label="Dispute Round")
+                    with gr.Column(scale=1):
+                        html_arb = gr.HTML(label="Arbitration")
+
                 html_grader = gr.HTML(label="Grader Report")
                 json_raw = gr.JSON(label="Raw JSON", visible=False)
 
@@ -406,6 +511,8 @@ def build_demo() -> gr.Blocks:
                         html_queue,
                         html_budget,
                         df_trace,
+                        html_round,
+                        html_arb,
                         html_grader,
                         json_raw,
                     ],
@@ -445,29 +552,33 @@ def build_demo() -> gr.Blocks:
                     ],
                     interactive=False,
                     wrap=True,
-                    label="10-Task Benchmark Catalog",
+                    label=f"{len(tasks)}-Task Benchmark Catalog",
                 )
 
             # ── Tab 3: Environment Info ───────────────────────────
             with gr.Tab("Environment"):
                 gr.Markdown(
-                    "## Action Space (9 typed actions)\n\n"
-                    "`select_case` &middot; `inspect_case` &middot; `query_system` &middot; "
-                    "`retrieve_policy` &middot; `add_evidence` &middot; `remove_evidence` &middot; "
-                    "`set_strategy` &middot; `submit_representment` &middot; `resolve_case`\n\n"
+                    "## Action Space (12 typed actions)\n\n"
+                    "**Round 1 — Representment:** `select_case` &middot; `inspect_case` &middot; "
+                    "`query_system` &middot; `retrieve_policy` &middot; `add_evidence` &middot; "
+                    "`remove_evidence` &middot; `set_strategy` &middot; `submit_representment` &middot; "
+                    "`resolve_case`\n\n"
+                    "**Round 2/3 — Pre-arb &amp; Arbitration:** `respond_to_pre_arb` &middot; "
+                    "`escalate_to_arbitration` &middot; `accept_arbitration_loss`\n\n"
                     "## Merchant Systems (6)\n\n"
                     "`orders` &middot; `payment` &middot; `shipping` &middot; "
                     "`support` &middot; `refunds` &middot; `risk`\n\n"
-                    "## Grading (7 dimensions)\n\n"
+                    "## Grading (8 dimensions)\n\n"
                     "| Dimension | Weight | Scoring |\n"
                     "|---|---|---|\n"
-                    "| Strategy Correctness | 25% | 1.0 optimal, 0.35 acceptable, 0.0 wrong |\n"
-                    "| Evidence Quality | 20% | Required + helpful coverage, harmful penalty |\n"
-                    "| Packet Validity | 15% | Binary: all required, zero harmful |\n"
-                    "| Deadline Compliance | 15% | Binary: resolved before deadline |\n"
+                    "| Strategy Correctness | 20% | 1.0 optimal, 0.35 acceptable, 0.0 wrong |\n"
+                    "| Evidence Quality | 15% | Required + helpful coverage, harmful penalty |\n"
+                    "| Packet Validity | 10% | Binary: all required, zero harmful |\n"
+                    "| Deadline Compliance | 10% | Binary: resolved before deadline |\n"
                     "| Efficiency | 10% | Penalises waste, rewards early concession |\n"
                     "| Outcome Quality | 10% | 1.0 optimal, 0.4 acceptable, 0.0 wrong |\n"
-                    "| Note Quality | 5% | Policy keywords + evidence refs |\n\n"
+                    "| Note Quality | 5% | Policy keywords + evidence refs |\n"
+                    "| Escalation ROI | 20% | EV-rational arbitration: P(win)·amount vs $250 fee |\n\n"
                     "## Card Networks\n\n"
                     "| Reason Code | Visa | Mastercard |\n"
                     "|---|---|---|\n"

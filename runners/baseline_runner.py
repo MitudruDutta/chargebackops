@@ -360,6 +360,104 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
             )
         return candidates
 
+    # Round 2 (pre-arbitration). Issuer rejected the round-1 packet and is
+    # asking for compelling evidence. Three legal moves: respond_to_pre_arb,
+    # escalate_to_arbitration, accept_arbitration_loss.
+    available = set(observation.get("available_actions", []))
+    if "respond_to_pre_arb" in available:
+        retrieved_items_r2 = visible_case.get("retrieved_evidence", [])
+        attached_ids_r2 = {
+            item["evidence_id"] for item in visible_case.get("attached_evidence", [])
+        }
+        compelling_ids = [
+            item["evidence_id"]
+            for item in retrieved_items_r2
+            if item["evidence_id"] not in attached_ids_r2
+            and not _is_harmful_evidence(item)
+        ]
+        compelling_ids = sorted(
+            compelling_ids,
+            key=lambda eid: _rank_attachable(
+                next(
+                    item
+                    for item in retrieved_items_r2
+                    if item["evidence_id"] == eid
+                )
+            ),
+        )[:2]
+        if compelling_ids:
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="respond_to_pre_arb",
+                        case_id=case_id,
+                        compelling_evidence_ids=compelling_ids,
+                        note=_build_representment_note(visible_case),
+                    ),
+                    summary=(
+                        f"Respond to pre-arbitration with compelling evidence "
+                        f"{', '.join(compelling_ids)} for case {case_id}."
+                    ),
+                )
+            )
+            return candidates
+        # No retrieved compelling evidence left. Try querying an unrevealed
+        # merchant system before giving up — round-2 budget often allows it
+        # and one extra +0.15 pre_arb piece can clear the 0.60 acceptance bar.
+        # Order matters: support/risk/refunds tend to hold compelling pieces;
+        # payment is mostly auth records and harmful AVS/CVV mismatches.
+        revealed = set(visible_case.get("systems_revealed", []))
+        all_systems = ("support", "risk", "refunds", "shipping", "orders", "payment")
+        unrevealed = [s for s in all_systems if s not in revealed]
+        if unrevealed and "query_system" in available:
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="query_system",
+                        case_id=case_id,
+                        system_name=unrevealed[0],
+                    ),
+                    summary=(
+                        f"Query {unrevealed[0]} for compelling evidence "
+                        f"on case {case_id} before deciding to escalate."
+                    ),
+                )
+            )
+            return candidates
+        # No compelling evidence anywhere. Decide on ROI: arbitration costs
+        # $250/side. Use the EV rule: escalate iff p_win * amount > arb_fee.
+        # Round-2 arbitration score is typically in the ambiguity band
+        # (P~0.5), so escalate when amount > 2 * 250 = 500.
+        amount = float(visible_case.get("amount", 0.0))
+        if amount >= 500.0 and "escalate_to_arbitration" in available:
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="escalate_to_arbitration",
+                        case_id=case_id,
+                    ),
+                    summary=(
+                        f"Escalate case {case_id} to arbitration "
+                        f"(amount ${amount:.0f} clears the EV break-even)."
+                    ),
+                )
+            )
+            return candidates
+        if "accept_arbitration_loss" in available:
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(
+                        action_type="accept_arbitration_loss",
+                        case_id=case_id,
+                    ),
+                    summary=(
+                        f"Accept arbitration loss on case {case_id} — no "
+                        f"compelling evidence and amount below ROI cutoff."
+                    ),
+                )
+            )
+            return candidates
+
     current_deadline = _visible_case_deadline(queue, case_id)
     best_other = _best_open_case(
         [case for case in open_cases if case["case_id"] != case_id]

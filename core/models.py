@@ -94,6 +94,14 @@ class VisibleCase(BaseModel):
     attached_evidence: list[EvidenceCard] = Field(default_factory=list)
     policy: PolicyView | None = None
     submission_status: str | None = None
+    # Multi-round dispute lifecycle visibility
+    round_number: int = 1
+    last_issuer_decision: str | None = None
+    last_issuer_rationale: str | None = None
+    pre_arb_evidence_added: list[str] = Field(default_factory=list)
+    arbitration_outcome: str | None = None
+    arb_fees_paid: float = 0.0
+    final_economic_outcome: float | None = None
 
 
 class TaskSummary(BaseModel):

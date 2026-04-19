@@ -1,10 +1,10 @@
 """Scripted Issuer agent for ChargebackOps multi-round dispute lifecycle.
 
 The Issuer reviews a merchant's representment packet and decides whether to
-accept it, request more evidence (triggering pre-arbitration ), or
-escalate to network arbitration. The decision is **deterministic** by default —
-benchmarks must be reproducible — with optional LLM softening reserved for the
-Day 4 milestone.
+accept it, request more evidence (triggering pre-arbitration), or escalate
+to network arbitration. The decision is **deterministic** by default —
+benchmarks must be reproducible — with optional LLM softening for the
+ambiguity band when an API key is present.
 
 Decision rule:
 
@@ -102,6 +102,12 @@ def evidence_strength_score(case: InternalCase, progress: CaseProgress) -> float
                     break
         if hits >= 2:
             score += 0.1
+
+    # Pre-arbitration compelling-evidence bonus: +0.15 per unique id added in
+    # round 2, capped at +0.30. Pulls a borderline packet across the 0.60
+    # round-2 acceptance bar without trivially clearing it.
+    pre_arb_unique = len({eid for eid in progress.pre_arb_evidence_added})
+    score += min(0.30, 0.15 * pre_arb_unique)
 
     return max(0.0, min(1.0, score))
 

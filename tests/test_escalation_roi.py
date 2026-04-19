@@ -62,7 +62,7 @@ def test_pre_arb_accept_is_full_credit():
     """Winning on the pre-arbitration re-submit without filing arbitration is
     the optimal path."""
     progress = _progress(
-        attached=["E1-ORDER-CONF", "E1-DELIVERY-SCAN"],
+        attached=["E1-ORDER-CONF", "E1-DELIVERY-SCAN", "E1-SIGNATURE", "E1-SUPPORT-ACK"],
         round_number=2,
         resolution_status="won_pre_arb",
     )
@@ -74,7 +74,7 @@ def test_reward_positive_ev_escalation():
     """Strong packet → P(win)=1.0 × $129.99 > $250? No. Test with bigger amount."""
     big_case = replace(_CASE, case_id="CB-BIG", amount=1000.0)
     progress = _progress(
-        attached=["E1-ORDER-CONF", "E1-DELIVERY-SCAN"],
+        attached=["E1-ORDER-CONF", "E1-DELIVERY-SCAN", "E1-SIGNATURE", "E1-SUPPORT-ACK"],
         round_number=3,
         resolution_status="won_arbitration",
         arbitration_outcome="merchant_wins",
@@ -102,7 +102,7 @@ def test_penalise_concede_when_escalation_was_positive_ev():
     """Conceding with a strong packet + large amount leaves money on the table."""
     big_case = replace(_CASE, case_id="CB-BIG2", amount=1000.0)
     progress = _progress(
-        attached=["E1-ORDER-CONF", "E1-DELIVERY-SCAN"],
+        attached=["E1-ORDER-CONF", "E1-DELIVERY-SCAN", "E1-SIGNATURE", "E1-SUPPORT-ACK"],
         round_number=2,
         resolution_status="conceded_pre_arb",
     )
@@ -128,9 +128,9 @@ def test_fee_threshold_is_the_pivot():
     assert ARB_FEE_PER_SIDE == 250.0
     # P(win)=0.5 × $600 = 300 > 250 → escalate is rational
     mid_case = replace(_CASE, case_id="CB-MID", amount=600.0)
-    # Score in ambiguity band by attaching two helpful-only ids.
+    # Score in ambiguity band by attaching two helpful-only ids (no required).
     progress = _progress(
-        attached=["E1-DELIVERY-SCAN", "E1-SUPPORT-ACK"],
+        attached=["E1-SIGNATURE", "E1-SUPPORT-ACK"],
         round_number=3,
         resolution_status="won_arbitration",
         arbitration_outcome="merchant_wins",

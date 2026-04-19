@@ -1026,7 +1026,7 @@ def _generate_evidence(
 
         if bp.required:
             required_ids.append(eid)
-        if bp.helpful:
+        elif bp.helpful:
             helpful_ids.append(eid)
         if bp.harmful:
             harmful_ids.append(eid)
@@ -1043,6 +1043,7 @@ def generate_case(
     case_index: int,
     *,
     deadline_step: int = 8,
+    dispute_complexity: float = 1.0,
 ) -> InternalCase:
     """Generate a single case from a template."""
 
@@ -1096,6 +1097,7 @@ def generate_case(
         network_reason_code=network_code,
         response_window_days=window_days,
         compelling_evidence_category=ce_category,
+        dispute_complexity=dispute_complexity,
     )
 
 
@@ -1138,8 +1140,8 @@ def generate_task(
     max_steps = {
         "easy": 10,
         "medium": 12,
-        "hard": max(12, case_count * 5),
-        "nightmare": max(12, case_count * 3),  # ~2.4 steps per case
+        "hard": max(16, case_count * 6),  # +1 step per case for round-2 work
+        "nightmare": max(18, case_count * 4),  # round-2 path needs breathing room
     }[difficulty]
 
     # Build the case list
@@ -1175,17 +1177,31 @@ def generate_task(
 
         used_templates.append(template)
 
-        # Deadline tightens with difficulty
+        # Deadline tightens with difficulty. Hard/nightmare leave room for
+        # the round-2 pre-arb response so the multi-round path is reachable.
         base_deadline = {
             "easy": 8,
             "medium": 7,
-            "hard": max(4, 8 - i),
-            "nightmare": max(3, 6 - i),
+            "hard": max(8, 12 - i),
+            "nightmare": max(6, 10 - i),
         }[difficulty]
         deadline = base_deadline + rng.randint(-1, 1)
         deadline = max(3, min(deadline, max_steps - 1))
 
-        case = generate_case(rng, template, i + 1, deadline_step=deadline)
+        complexity = {
+            "easy": 1.0,
+            "medium": 0.90,
+            "hard": 0.60,
+            "nightmare": 0.50,
+        }[difficulty]
+
+        case = generate_case(
+            rng,
+            template,
+            i + 1,
+            deadline_step=deadline,
+            dispute_complexity=complexity,
+        )
         cases.append(case)
 
     # Build task metadata

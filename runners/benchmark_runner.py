@@ -7,7 +7,7 @@ and offline.
 
 Policies
 --------
-* ``heuristic`` — the Round 1 first-candidate pick (best scripted baseline).
+* ``heuristic`` — the first-candidate pick from the candidate generator (best scripted baseline).
 * ``concede_all`` — always set strategy to ``accept_chargeback`` and resolve.
 * ``escalate_all`` — contest like the heuristic, then escalate in the
   pre-arb and arbitration steps regardless of evidence strength.
@@ -15,7 +15,7 @@ Policies
 
 The runner also exposes :func:`run_multi_seed` which sweeps each policy
 over the headline catalog plus extra generator seeds so the benchmark
-table in ``docs/RESULTS_V2.md`` is reproducible from one command.
+table in ``docs/RESULTS.md`` is reproducible from one command.
 """
 
 from __future__ import annotations

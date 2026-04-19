@@ -100,9 +100,21 @@ def test_easy_case_can_be_won():
     )
     env.step(
         ChargebackOpsAction(
+            action_type="query_system",
+            case_id="CB-E1",
+            system_name="support",
+        )
+    )
+    env.step(
+        ChargebackOpsAction(
             action_type="add_evidence",
             case_id="CB-E1",
-            evidence_ids=["E1-ORDER-CONF", "E1-DELIVERY-SCAN"],
+            evidence_ids=[
+                "E1-ORDER-CONF",
+                "E1-DELIVERY-SCAN",
+                "E1-SIGNATURE",
+                "E1-SUPPORT-ACK",
+            ],
         )
     )
     env.step(
@@ -194,12 +206,17 @@ def test_full_three_round_cycle_ending_in_arbitration():
     )
     _drive_case_into_round_2(env)
 
+    env.step(
+        ChargebackOpsAction(
+            action_type="query_system", case_id="CB-E1", system_name="support"
+        )
+    )
     obs = env.step(
         ChargebackOpsAction(
             action_type="respond_to_pre_arb",
             case_id="CB-E1",
-            compelling_evidence_ids=["E1-SIGNATURE"],
-            note="Added signature-level delivery proof for pre-arb.",
+            compelling_evidence_ids=["E1-SIGNATURE", "E1-SUPPORT-ACK"],
+            note="Added signature delivery proof and support ack for pre-arb.",
         )
     )
 

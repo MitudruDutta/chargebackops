@@ -59,13 +59,16 @@ ChargebackOps is built for the [OpenEnv](https://meta-pytorch.org/OpenEnv/index.
 - Manage step budget across all cases when there are more cases than steps
 
 **What the agent is scored on:**
-- Did it choose the correct strategy? (25% of score)
-- Did it gather the right evidence? (20%)
-- Is the evidence packet complete and clean? (15%)
-- Did it meet the deadline? (15%)
+- Did it choose the correct strategy? (20% of score)
+- Did it gather the right evidence? (15%)
+- Is the evidence packet complete and clean? (10%)
+- Did it meet the deadline? (10%)
 - Was it efficient (no wasted steps)? (10%)
 - Did the resolution match the strategy? (10%)
 - Is the representment note well-written? (5%)
+- Was escalation EV-rational? (20% — escalate iff `P(win)·amount > $250 fee`)
+
+After the merchant submits a representment, a scripted **IssuerAgent** reviews the packet and returns one of three decisions: `accept`, `request_more_evidence` (triggering pre-arbitration with compelling evidence), or `escalate_to_arbitration`. The merchant can also choose to escalate at round 2 instead of rebuilding the packet, or accept an arbitration loss to cap fees. Network arbitration is a deterministic resolver: the loser eats the dispute amount plus a $250 fee, the winner is reimbursed minus their own $250 fee.
 
 ---
 
@@ -110,7 +113,9 @@ When a case is selected, `visible_case` exposes:
 | `attached_evidence` | Evidence currently attached to the representment package |
 | `inspection_notes` | Analyst notes (null until `inspect_case` is called) |
 
-### Action Space (9 Actions)
+### Action Space (12 Actions)
+
+**Round 1 — Representment**
 
 | Action | Arguments | Cost | What It Does |
 |---|---|---|---|
@@ -123,6 +128,14 @@ When a case is selected, `visible_case` exposes:
 | `set_strategy` | case_id, strategy | 1 step | Choose contest / accept_chargeback / issue_refund |
 | `submit_representment` | case_id, note | 1 step | Submit the contest package (requires strategy = contest) |
 | `resolve_case` | case_id, strategy | 1 step | Close a non-contest case (accept or refund) |
+
+**Round 2/3 — Pre-Arbitration & Arbitration**
+
+| Action | Arguments | Cost | What It Does |
+|---|---|---|---|
+| `respond_to_pre_arb` | case_id, compelling_evidence_ids | 1 step | Attach compelling evidence and resubmit at round 2 (Issuer accept threshold drops to 0.60) |
+| `escalate_to_arbitration` | case_id | 1 step | Skip rebuilding the packet, pay $250 fee, push to network arbitration |
+| `accept_arbitration_loss` | case_id | 1 step | Concede at round 2/3 to cap fees |
 
 Every action costs exactly 1 step. There is no free action. The agent must be deliberate about every step it takes.
 
@@ -380,9 +393,9 @@ When the agent submits a contest, it generates a representment note. The grader 
 
 ## The Grading System
 
-After all cases are resolved (or the step budget is exhausted), the grader scores each case across 7 dimensions. Each dimension is an OpenEnv `Rubric` subclass defined in `evaluation/rubrics.py`; they compose into a per-case `WeightedSum` and an episode-level `ChargebackOpsEpisodeRubric` that is wired into `env.rubric`. `evaluation/grading.py` keeps the legacy `score_case` / `grade_episode` API as a thin adapter over the rubric tree.
+After all cases are resolved (or the step budget is exhausted), the grader scores each case across 8 dimensions. Each dimension is an OpenEnv `Rubric` subclass defined in `evaluation/rubrics.py`; they compose into a per-case `WeightedSum` (wrapped in a `Gate(CaseAbandonedRubric)` deadline guard) and an episode-level `ChargebackOpsEpisodeRubric` that is wired into `env.rubric`. `evaluation/grading.py` keeps the legacy `score_case` / `grade_episode` API as a thin adapter over the rubric tree.
 
-### Strategy Correctness (25%)
+### Strategy Correctness (20%)
 
 | Outcome | Score |
 |---|---|
@@ -392,7 +405,7 @@ After all cases are resolved (or the step budget is exhausted), the grader score
 
 "Optimal" and "acceptable" strategies are defined per case by the task scenario. For example, `goods_not_received` optimal is always "contest" with no acceptable fallback. `fraud_cnp` optimal might be "contest" with "accept_chargeback" as acceptable, or vice versa.
 
-### Evidence Quality (20%)
+### Evidence Quality (15%)
 
 For **contest** cases:
 ```
@@ -408,7 +421,7 @@ For **non-contest** cases where optimal strategy is also non-contest:
 For **non-contest** cases where optimal was contest:
 - 0.15 (the agent abandoned evidence gathering for a contestable case)
 
-### Packet Validity (15%)
+### Packet Validity (10%)
 
 Binary, all-or-nothing:
 - **1.0** if ALL required evidence is attached AND zero harmful evidence is attached
@@ -416,7 +429,7 @@ Binary, all-or-nothing:
 
 This is the strictest dimension. Missing one required piece or having one harmful piece zeroes it out.
 
-### Deadline Compliance (15%)
+### Deadline Compliance (10%)
 
 Binary:
 - **1.0** if the case was resolved at or before the deadline step
@@ -447,16 +460,34 @@ Additional penalties for shallow operational behaviour:
 
 Only scored for contest cases with a representment note. See [Representment Notes](#representment-notes) for the scoring breakdown.
 
+### Escalation ROI (20%)
+
+Encodes the economic rule that escalating to network arbitration is rational only when
+`P(win) × dispute_amount > $250 fee`. Conceding a positive-EV contestable case (where
+`amount > $250` and the optimal strategy is `contest`) is penalised. Escalating a
+negative-EV case (low P(win) or low amount) is also penalised. This is the dimension that
+keeps `concede_all` from being a free 0.6+ score.
+
+### Deadline Gate
+
+Before the WeightedSum scores anything, `Gate(CaseAbandonedRubric)` checks whether the case
+was left unresolved past its deadline. If yes, the entire case score is hard-zeroed. This
+prevents the agent from gaming the rubric by ignoring nightmare-tier cases and still
+collecting partial credit on the dimensions it did touch.
+
 ### Final Score Calculation
 
 ```
-case_score = 0.25 * strategy_correctness
-           + 0.20 * evidence_quality
-           + 0.15 * packet_validity
-           + 0.15 * deadline_compliance
+case_score = 0.20 * strategy_correctness
+           + 0.15 * evidence_quality
+           + 0.10 * packet_validity
+           + 0.10 * deadline_compliance
            + 0.10 * efficiency
            + 0.10 * outcome_quality
            + 0.05 * note_quality
+           + 0.20 * escalation_roi
+
+case_score = 0.0 if case_abandoned else case_score   # deadline gate
 
 weighted_case_score = case_score * case_weight
 
@@ -466,6 +497,49 @@ episode_score = sum(weighted_case_scores) / sum(case_weights)
 Case weights are determined by financial impact (amount and difficulty). The episode score normalizes to `[0.0, 1.0]`.
 
 ---
+
+## The Issuer Agent
+
+After every `submit_representment`, a scripted `IssuerAgent` (see `scenarios/issuer_model.py`)
+reviews the packet and returns one of three decisions:
+
+| Decision | Score band (round 1) | Score band (round 2) | What happens |
+|---|---|---|---|
+| `accept` | ≥ 0.70 | ≥ 0.60 | Merchant wins the dispute, case closes positive |
+| `request_more_evidence` | 0.40 – 0.70 | < 0.60 | Round 2: merchant gets one more shot with compelling evidence |
+| `escalate_to_arbitration` | < 0.40 | (only if merchant escalates) | Round 3: case goes to network arbitration |
+
+The score itself comes from `evidence_strength_score`:
+
+```
+score = 0.4 (if all required evidence attached)
+      + min(0.4, 0.2 × helpful_attached)
+      − 0.3 × harmful_attached            # uncapped
+      + 0.1 (if note has ≥ 2 policy keywords)
+      + min(0.30, 0.15 × pre_arb_unique)  # round 2 only
+```
+
+In the round-1 ambiguity band (0.40–0.70), the deterministic fallback uses the midpoint rule:
+`accept` at score ≥ 0.55, otherwise `request_more_evidence`. An optional LLM softening layer
+can override this midpoint when an API key is set; with no key it falls back to the
+deterministic rule so offline benchmarks stay reproducible.
+
+## Arbitration
+
+Network arbitration is a pure function (see `scenarios/arbitration.py`). Given the same case ID
+and packet state, the ruling is always the same — it seeds a coin flip from a SHA-256 hash of
+the case ID inside an ambiguity band. The bands:
+
+| Evidence-strength score | Ruling |
+|---|---|
+| ≥ 0.65 | `merchant_wins` |
+| ≤ 0.35 | `issuer_wins` |
+| (0.35, 0.65) | seeded coin flip on `sha256(case_id)` |
+
+Both sides pay a $250 fee regardless of outcome. The winner is reimbursed the dispute amount
+minus their $250 fee; the loser eats the dispute amount plus the $250 fee. The
+`EscalationROIRubric` reads the final P&L and scores whether the agent's escalate / concede
+decision was EV-rational ex ante.
 
 ## LLM Integration
 
@@ -566,7 +640,9 @@ Nightmare tasks push the step budget to its limit: 5-6 cases with ~2.4 steps per
 |---|---|---|
 | `runners/baseline_runner.py` | The agent: decision pipeline, candidate generation, LLM integration, representment notes | ~1100 |
 | `server/chargeback_ops_environment.py` | The environment: step/reset/state, action execution, reward computation | ~500 |
-| `evaluation/rubrics.py` | OpenEnv `Rubric` subclasses for all 7 scoring dimensions, composed via `WeightedSum` | ~300 |
+| `evaluation/rubrics.py` | OpenEnv `Rubric` subclasses for all 8 scoring dimensions, composed via `WeightedSum` + `Gate(CaseAbandonedRubric)` | ~400 |
+| `scenarios/issuer_model.py` | Scripted `IssuerAgent`: evidence-strength scoring, threshold bands, optional LLM softening | ~250 |
+| `scenarios/arbitration.py` | Deterministic network arbitration resolver with $250 per-side fee | ~120 |
 | `evaluation/grading.py` | Legacy `score_case` / `grade_episode` adapter that delegates to the rubric tree | ~120 |
 | `scenarios/simulation.py` | Task definitions, case progress tracking, evidence metadata | ~600 |
 | `core/models.py` | Pydantic models for actions, observations, state, grading | ~600 |
@@ -585,14 +661,20 @@ Nightmare tasks push the step budget to its limit: 5-6 cases with ~2.4 steps per
 
 ## Performance
 
-Tested across the 10-task benchmark (3 showcase + 7 seeded holdout):
+Tested across the 11-task headline benchmark (4 showcase + 7 seeded holdout) and a 28-task
+multi-seed grid:
 
-| Difficulty | Tasks | Heuristic | LLM tiebreak | Bad | Key Observations |
-|---|---|---|---|---|---|
-| Easy | 3 | 0.964 | 0.964 | 0.323 | Heuristic + LLM both saturate the easy band |
-| Medium | 2 | 0.755 | 0.755 | 0.278 | Strategy selection + evidence curation drive the spread |
-| Hard | 3 | 0.635 | 0.651 | 0.113 | LLM edges heuristic on `queue_optimization_hard` (+0.049) |
-| Nightmare | 2 | 0.466 | 0.466 | 0.065 | 5-case portfolios with deadline_step=3–5; step budget collides |
-| **Overall** | **10** | **0.724** | **0.729** | **0.199** | **Delta 0.525 vs bad policy** |
+| Policy | Headline (11) | Multi-seed (28) | Delta vs naive |
+|---|---|---|---|
+| naive (empty packet) | 0.000 | 0.000 | — |
+| concede_all | 0.567 | 0.563 | +0.567 |
+| escalate_all | 0.773 | 0.765 | +0.773 |
+| heuristic | **0.773** | **0.765** | **+0.773** |
 
-The difficulty curve demonstrates the environment discriminates effectively: easy tasks are near-trivial, nightmare tasks push every agent below 50%. The `Gate(CaseAbandonedRubric)` wrapper hard-zeros cases left unresolved past their deadline, so the heuristic's slowness on nightmare portfolios shows up as a real signal rather than dilution across 7 partial dimensions. The LLM-assisted run now edges ahead of the pure heuristic (+0.005) and makes only **7 provider calls** across the 10-task run (down from 19 in v1) because `_obvious_next_action` short-circuits deterministic workflow states — strategy picks, add/remove evidence, submit, resolve. A 28-task multi-seed grid (7 seeds × 4 difficulties) reports heuristic 0.712 ± 0.235 and bad policy 0.241 ± 0.194 — the fixed-seed headline is within 1σ of the multi-seed result. See `docs/RESULTS.md` for full per-task numbers.
+The difficulty curve runs 0.97 → 0.88 → 0.70 → 0.51 across easy / medium / hard / nightmare on
+the multi-seed grid — monotone and well-separated. The `Gate(CaseAbandonedRubric)` wrapper
+hard-zeros abandoned cases, and `EscalationROIRubric` (20%) penalises both conceding positive-EV
+contestable cases and escalating negative-EV ones — together they kill the concede-everything
+shortcut. `escalate_all` ties heuristic at the headline because the merchant's round-1 packet
+is strong enough on most tasks that the pre-arb branch never fires. See `docs/RESULTS.md` for
+full per-task numbers, the rubric tree, and reproduction commands.

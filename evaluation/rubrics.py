@@ -11,10 +11,17 @@ as the ``action`` argument of :meth:`Rubric.forward`. The ``observation``
 argument is ignored — ChargebackOps grading operates over deterministic
 episode progress, not on the last observation payload. This keeps the rubrics
 pure and unit-testable without an environment instance.
+
+Set ``USE_LLM_NOTE_JUDGE=1`` to swap the deterministic
+:class:`NoteQualityRubric` for the LLM-backed
+:class:`evaluation.llm_note_judge.LLMNoteJudgeRubric` when constructing
+:class:`CaseRubric`. The LLM rubric falls back to the deterministic scorer
+on any failure, so offline benchmarks remain reproducible without API keys.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -293,6 +300,15 @@ class EscalationROIRubric(Rubric):
         progress = ctx.progress
 
         if progress.round_number < 2 and progress.arbitration_outcome is None:
+            # Vacuous credit only when the case was never contestable.
+            # Conceding a contestable case before reaching the issuer review
+            # is a forfeit on EV grounds, not a smart decision — penalise it.
+            if case.optimal_strategy == "contest":
+                expected_contest_recovery = case.amount  # P(win) at full evidence
+                if expected_contest_recovery > ARB_FEE_PER_SIDE:
+                    final = _final_resolution(progress)
+                    if final in {"accept_chargeback", "issue_refund"}:
+                        return 0.0
             return 1.0
 
         score = evidence_strength_score(case, progress)
@@ -415,6 +431,23 @@ CASE_DIMENSION_WEIGHTS: tuple[float, ...] = (
     0.05,
     0.20,
 )
+def _resolve_default_note_rubric() -> Rubric:
+    """Return the LLM-backed note judge if opted in, else the deterministic one.
+
+    Reads ``USE_LLM_NOTE_JUDGE`` lazily so importing this module never triggers
+    a provider import. The LLM rubric internally falls back to
+    :class:`NoteQualityRubric` when no provider key is set.
+    """
+
+    if os.getenv("USE_LLM_NOTE_JUDGE", "").lower() in {"1", "true", "yes"}:
+        try:  # pragma: no cover - import-time guard
+            from .llm_note_judge import LLMNoteJudgeRubric
+        except ImportError:
+            from evaluation.llm_note_judge import LLMNoteJudgeRubric
+        return LLMNoteJudgeRubric()
+    return NoteQualityRubric()
+
+
 CASE_DIMENSION_NAMES: tuple[str, ...] = (
     "strategy_correctness",
     "evidence_quality",
@@ -441,8 +474,10 @@ class CaseRubric(Rubric):
     :meth:`named_rubrics`.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, note_rubric: Rubric | None = None) -> None:
         super().__init__()
+        if note_rubric is None:
+            note_rubric = _resolve_default_note_rubric()
         self.aggregator = WeightedSum(
             rubrics=[
                 StrategyCorrectnessRubric(),
@@ -451,7 +486,7 @@ class CaseRubric(Rubric):
                 DeadlineComplianceRubric(),
                 EfficiencyRubric(),
                 OutcomeQualityRubric(),
-                NoteQualityRubric(),
+                note_rubric,
                 EscalationROIRubric(),
             ],
             weights=list(CASE_DIMENSION_WEIGHTS),
