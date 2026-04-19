@@ -85,6 +85,13 @@ class CaseProgress:
     deadline_penalized: bool = False
     notes: list[str] = field(default_factory=list)
     representment_note: str | None = None
+    # v2 multi-round dispute lifecycle (PRD §4.4)
+    round_number: int = 1
+    issuer_decisions: list[str] = field(default_factory=list)
+    pre_arb_evidence_added: list[str] = field(default_factory=list)
+    arbitration_outcome: str | None = None
+    arb_fees_paid: float = 0.0
+    final_economic_outcome: float | None = None
 
 
 @dataclass

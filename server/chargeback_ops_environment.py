@@ -23,6 +23,7 @@ try:
         PolicyView,
         VisibleCase,
     )
+    from ..scenarios.issuer_model import IssuerAgent, IssuerDecision
     from ..scenarios.simulation import (
         ActionRecord,
         CaseProgress,
@@ -44,6 +45,7 @@ except ImportError:  # pragma: no cover
         PolicyView,
         VisibleCase,
     )
+    from scenarios.issuer_model import IssuerAgent, IssuerDecision
     from scenarios.simulation import ActionRecord, CaseProgress, InternalCase, get_task
 
 
@@ -61,6 +63,7 @@ class ChargebackOpsEnvironment(
         self._last_action_result = "Environment initialized."
         self._action_history: list[ActionRecord] = []
         self._progress_by_case: dict[str, CaseProgress] = {}
+        self._issuer_agent = IssuerAgent()
         self._state = ChargebackOpsState(
             episode_id=str(uuid4()),
             step_count=0,
@@ -210,6 +213,15 @@ class ChargebackOpsEnvironment(
             return self._submit_representment(case, note=action.note)
         if action.action_type == "resolve_case":
             return self._resolve_case(case, action.strategy)
+        # v2 multi-round actions — full logic lands on Day 2 (PRD §4.5).
+        if action.action_type in (
+            "respond_to_pre_arb",
+            "escalate_to_arbitration",
+            "accept_arbitration_loss",
+        ):
+            raise ValueError(
+                f"Action '{action.action_type}' is registered but not yet wired (Day 2)."
+            )
         raise ValueError(f"Unsupported action_type '{action.action_type}'.")
 
     def _select_case(self, case_id: str | None) -> tuple[float, str]:
@@ -389,18 +401,36 @@ class ChargebackOpsEnvironment(
                 f"Representment for case {case.case_id} included harmful evidence {', '.join(sorted(harmful))}."
             )
 
-        progress.final_resolution = "contest"
-        progress.resolved_at_step = self._state.step_count
-        if case.optimal_strategy == "contest":
+        # v2: hand off to scripted Issuer instead of unconditionally terminating.
+        review = self._issuer_agent.decide_review(case, progress, round_number=1)
+        progress.issuer_decisions.append(review.decision.value)
+
+        if review.decision == IssuerDecision.ACCEPT:
+            progress.final_resolution = "contest"
             progress.resolution_status = "won"
+            progress.resolved_at_step = self._state.step_count
             return (
-                0.2,
-                f"Submitted a strong representment package for case {case.case_id}.",
+                0.45,
+                f"Issuer accepted representment for case {case.case_id} "
+                f"(score {review.evidence_strength_score:.2f}). {review.rationale}",
             )
+
+        if review.decision == IssuerDecision.REQUEST_MORE_EVIDENCE:
+            progress.round_number = 2
+            progress.resolution_status = "open"
+            return (
+                -0.05,
+                f"Issuer requested compelling evidence for case {case.case_id} "
+                f"(score {review.evidence_strength_score:.2f}). {review.rationale}",
+            )
+
+        # Defensive: Issuer should not escalate from round 1, but handle just in case.
+        progress.final_resolution = "contest"
         progress.resolution_status = "lost_contest"
+        progress.resolved_at_step = self._state.step_count
         return (
             -0.12,
-            f"Contested case {case.case_id}, but the case was not supportable.",
+            f"Issuer escalated case {case.case_id} unexpectedly. {review.rationale}",
         )
 
     def _resolve_case(

@@ -19,6 +19,10 @@ ActionType = Literal[
     "set_strategy",
     "submit_representment",
     "resolve_case",
+    # v2 multi-round dispute actions (PRD §4.3)
+    "respond_to_pre_arb",
+    "escalate_to_arbitration",
+    "accept_arbitration_loss",
 ]
 
 
@@ -197,6 +201,11 @@ class ChargebackOpsAction(Action):
         default_factory=list,
         max_length=20,
         description="Evidence ids to attach or remove",
+    )
+    compelling_evidence_ids: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Evidence ids to attach as compelling evidence in pre-arbitration (round 2)",
     )
     strategy: StrategyName | None = Field(
         default=None,
