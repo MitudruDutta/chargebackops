@@ -28,11 +28,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 try:
     from .simulation import CaseProgress, InternalCase
 except ImportError:  # pragma: no cover
     from scenarios.simulation import CaseProgress, InternalCase
+
+if TYPE_CHECKING:
+    from .llm_softening import IssuerDeciderFn
 
 
 class IssuerDecision(str, Enum):
@@ -103,14 +107,29 @@ def evidence_strength_score(case: InternalCase, progress: CaseProgress) -> float
 
 
 class IssuerAgent:
-    """Scripted Issuer with deterministic decisions in both rounds.
+    """Scripted Issuer with deterministic decisions, optional LLM softening.
 
-    LLM softening for the round-1 ambiguity band (0.4 < score < 0.7) is wired
-    in at Day 4 — for now the deterministic midpoint fallback always applies.
+    When ``enable_llm_softening`` is True, ambiguity-band scores (0.4 < score
+    < 0.7) in the first-round review are routed through an LLM decider that
+    returns ACCEPT or REQUEST_MORE_EVIDENCE. If the decider is missing or
+    errors out, the deterministic midpoint rule takes over so benchmarks stay
+    reproducible without API keys.
     """
 
-    def __init__(self, *, enable_llm_softening: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        enable_llm_softening: bool = False,
+        llm_decider: "IssuerDeciderFn | None" = None,
+    ) -> None:
         self.enable_llm_softening = enable_llm_softening
+        self._llm_decider = llm_decider
+        if self.enable_llm_softening and self._llm_decider is None:
+            try:
+                from .llm_softening import build_default_llm_decider
+            except ImportError:  # pragma: no cover
+                from scenarios.llm_softening import build_default_llm_decider
+            self._llm_decider = build_default_llm_decider()
 
     def decide_review(
         self,
@@ -141,7 +160,7 @@ class IssuerAgent:
                 ),
             )
 
-        # Round 1 decision matrix.
+        # decision matrix.
         if score >= ROUND1_ACCEPT_THRESHOLD:
             return IssuerReview(
                 decision=IssuerDecision.ACCEPT,
@@ -160,7 +179,34 @@ class IssuerAgent:
                 ),
             )
 
-        # Ambiguity band (0.40, 0.70). LLM softening would land here on Day 4.
+        # Ambiguity band (0.40, 0.70). Prefer LLM softening when enabled and
+        # the decider returns a verdict; otherwise fall back to the midpoint.
+        if self.enable_llm_softening and self._llm_decider is not None:
+            try:
+                llm_decision = self._llm_decider(case, progress, score)
+            except Exception:
+                llm_decision = None
+            if llm_decision is IssuerDecision.ACCEPT:
+                return IssuerReview(
+                    decision=IssuerDecision.ACCEPT,
+                    evidence_strength_score=score,
+                    rationale=(
+                        f"Round 1 ambiguity band: packet scores {score:.2f} — "
+                        f"LLM softening accepted."
+                    ),
+                    used_llm_softening=True,
+                )
+            if llm_decision is IssuerDecision.REQUEST_MORE_EVIDENCE:
+                return IssuerReview(
+                    decision=IssuerDecision.REQUEST_MORE_EVIDENCE,
+                    evidence_strength_score=score,
+                    rationale=(
+                        f"Round 1 ambiguity band: packet scores {score:.2f} — "
+                        f"LLM softening requested compelling evidence."
+                    ),
+                    used_llm_softening=True,
+                )
+
         if score >= ROUND1_MIDPOINT_FALLBACK:
             return IssuerReview(
                 decision=IssuerDecision.ACCEPT,

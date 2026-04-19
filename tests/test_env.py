@@ -170,7 +170,7 @@ def test_generated_task_covers_all_reason_codes():
 # ---------------------------------------------------------------------------
 
 
-def test_round2_available_actions_exclude_submit_representment():
+def test_pre_arb_available_actions_exclude_submit_representment():
     env = ChargebackOpsEnvironment()
     env.reset(task_id="goods_not_received_easy")
     env._issuer_agent = _ScriptedIssuer([IssuerDecision.REQUEST_MORE_EVIDENCE])

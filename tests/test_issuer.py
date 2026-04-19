@@ -29,8 +29,8 @@ def _progress(attached: list[str], note: str | None = None) -> CaseProgress:
     return p
 
 
-def test_round1_accept_when_required_and_helpful_attached():
-    """Both required ids attached → score 0.8 → ACCEPT in round 1."""
+def test_representment_accepted_when_required_and_helpful_attached():
+    """Both required ids attached → score 0.8 → ACCEPT on first review."""
     progress = _progress(["E1-ORDER-CONF", "E1-DELIVERY-SCAN"])
     score = evidence_strength_score(_CASE, progress)
     assert score >= ROUND1_ACCEPT_THRESHOLD
@@ -40,8 +40,8 @@ def test_round1_accept_when_required_and_helpful_attached():
     assert review.evidence_strength_score == score
 
 
-def test_round1_request_more_when_packet_empty():
-    """Empty packet → score 0 → REQUEST_MORE_EVIDENCE in round 1."""
+def test_representment_rejected_when_packet_empty():
+    """Empty packet → score 0 → REQUEST_MORE_EVIDENCE on first review."""
     progress = _progress([])
     review = IssuerAgent().decide_review(_CASE, progress, round_number=1)
     assert review.decision == IssuerDecision.REQUEST_MORE_EVIDENCE
@@ -69,23 +69,23 @@ def test_harmful_evidence_drops_score():
         assert 0.0 <= helpful_only <= 1.0
 
 
-def test_round2_escalate_when_score_below_06():
-    """Round 2 is confrontational: anything < 0.6 escalates to arbitration."""
+def test_pre_arb_escalates_when_score_below_06():
+    """Pre-arb review is confrontational: anything < 0.6 escalates to arbitration."""
     progress = _progress([])
     review = IssuerAgent().decide_review(_CASE, progress, round_number=2)
     assert review.decision == IssuerDecision.ESCALATE_TO_ARBITRATION
     assert review.evidence_strength_score < ROUND2_ACCEPT_THRESHOLD
 
 
-def test_round2_accept_when_pre_arb_evidence_strong():
-    """Round 2 accepts at the lower 0.60 bar once the packet is rebuilt."""
+def test_pre_arb_accepted_when_evidence_strong():
+    """Pre-arb review accepts at the lower 0.60 bar once the packet is rebuilt."""
     progress = _progress(["E1-ORDER-CONF", "E1-DELIVERY-SCAN"])
     review = IssuerAgent().decide_review(_CASE, progress, round_number=2)
     assert review.decision == IssuerDecision.ACCEPT
     assert review.evidence_strength_score >= ROUND2_ACCEPT_THRESHOLD
 
 
-def test_round1_midpoint_band_uses_deterministic_fallback():
+def test_midpoint_band_uses_deterministic_fallback():
     """Scores in the (0.40, 0.70) band split at the 0.55 midpoint."""
     # Construct a synthetic score by attaching only required (no helpful credit
     # if helpful list happens to overlap, this still pins the midpoint logic).
