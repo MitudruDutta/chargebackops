@@ -147,15 +147,15 @@ class IssuerAgent:
                     decision=IssuerDecision.ACCEPT,
                     evidence_strength_score=score,
                     rationale=(
-                        f"Round {round_number}: pre-arb evidence brings the packet "
-                        f"to {score:.2f}, above the 0.60 acceptance bar."
+                        f"Pre-arb evidence brings the packet to {score:.2f}, "
+                        f"above the 0.60 acceptance bar."
                     ),
                 )
             return IssuerReview(
                 decision=IssuerDecision.ESCALATE_TO_ARBITRATION,
                 evidence_strength_score=score,
                 rationale=(
-                    f"Round {round_number}: packet still scores {score:.2f}; "
+                    f"Packet still scores {score:.2f}; "
                     f"escalating to network arbitration."
                 ),
             )
@@ -166,7 +166,7 @@ class IssuerAgent:
                 decision=IssuerDecision.ACCEPT,
                 evidence_strength_score=score,
                 rationale=(
-                    f"Round 1: packet scores {score:.2f}, clearing the 0.70 acceptance bar."
+                    f"Packet scores {score:.2f}, clearing the 0.70 acceptance bar."
                 ),
             )
         if score <= ROUND1_REJECT_THRESHOLD:
@@ -174,7 +174,7 @@ class IssuerAgent:
                 decision=IssuerDecision.REQUEST_MORE_EVIDENCE,
                 evidence_strength_score=score,
                 rationale=(
-                    f"Round 1: packet scores {score:.2f}, below the 0.40 floor; "
+                    f"Packet scores {score:.2f}, below the 0.40 floor; "
                     f"requesting compelling evidence."
                 ),
             )
@@ -191,7 +191,7 @@ class IssuerAgent:
                     decision=IssuerDecision.ACCEPT,
                     evidence_strength_score=score,
                     rationale=(
-                        f"Round 1 ambiguity band: packet scores {score:.2f} — "
+                        f"Ambiguity band: packet scores {score:.2f} — "
                         f"LLM softening accepted."
                     ),
                     used_llm_softening=True,
@@ -201,7 +201,7 @@ class IssuerAgent:
                     decision=IssuerDecision.REQUEST_MORE_EVIDENCE,
                     evidence_strength_score=score,
                     rationale=(
-                        f"Round 1 ambiguity band: packet scores {score:.2f} — "
+                        f"Ambiguity band: packet scores {score:.2f} — "
                         f"LLM softening requested compelling evidence."
                     ),
                     used_llm_softening=True,
@@ -212,7 +212,7 @@ class IssuerAgent:
                 decision=IssuerDecision.ACCEPT,
                 evidence_strength_score=score,
                 rationale=(
-                    f"Round 1 ambiguity band: packet scores {score:.2f} "
+                    f"Ambiguity band: packet scores {score:.2f} "
                     f"(>= {ROUND1_MIDPOINT_FALLBACK:.2f} midpoint) — accepting."
                 ),
             )
@@ -220,7 +220,7 @@ class IssuerAgent:
             decision=IssuerDecision.REQUEST_MORE_EVIDENCE,
             evidence_strength_score=score,
             rationale=(
-                f"Round 1 ambiguity band: packet scores {score:.2f} "
+                f"Ambiguity band: packet scores {score:.2f} "
                 f"(< {ROUND1_MIDPOINT_FALLBACK:.2f} midpoint) — requesting more evidence."
             ),
         )
