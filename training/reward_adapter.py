@@ -4,11 +4,14 @@ Exposes a callable shape compatible with TRL's GRPO reward function:
 
 ``reward_fn(prompts, completions, **kwargs) -> list[float]``
 
-Each completion is parsed into an action sequence (one action per line
-is the simplest case; the helper also accepts a single-action
-completion and runs the remainder of the episode under the scripted
-heuristic so training always produces a terminal score). The resulting
-reward is the episode's deterministic normalized grade in ``[0, 1]``.
+The reward is a *per-action* match score against the scripted heuristic
+oracle at the dataset's recorded environment state. Episode replay was
+removed deliberately: previously every parse-failure fell back to the
+heuristic and earned ~0.96 reward, which trained the model that emitting
+garbage was optimal (group reward variance ≈ 0 → GRPO advantage = 0 →
+loss collapsed). Per-action scoring against the oracle gives high
+variance even for an untrained model: parse-fails earn 0.0, valid-but-
+wrong actions earn 0.1-0.7, exact matches earn 1.0.
 """
 
 from __future__ import annotations
@@ -43,16 +46,34 @@ class EpisodeResult:
     completions: tuple[str, ...] = field(default_factory=tuple)
 
 
-def _fallback_action(
-    observation: ChargebackOpsObservation,
-) -> ChargebackOpsAction | None:
-    """Scripted fallback when the model output is unparseable."""
+@dataclass(frozen=True)
+class StateActionSample:
+    """One (env_state, oracle_action) pair captured from a heuristic rollout."""
 
+    task_id: str
+    state_step: int
+    prompt: str
+    oracle_action_type: str
+
+
+def _heuristic_policy(observation_dict: dict[str, Any]) -> ChargebackOpsAction | None:
     try:
         from ..runners.benchmark_runner import heuristic_policy
     except ImportError:  # pragma: no cover
         from runners.benchmark_runner import heuristic_policy
-    return heuristic_policy(observation.model_dump())
+    return heuristic_policy(observation_dict)
+
+
+def _fallback_action(
+    observation: ChargebackOpsObservation,
+) -> ChargebackOpsAction | None:
+    """Scripted fallback used by the debug/eval rollout helper only.
+
+    NOTE: deliberately *not* used by :func:`compute_reward` — falling back
+    to the heuristic on parse-fail trains the model that garbage = good.
+    """
+
+    return _heuristic_policy(observation.model_dump())
 
 
 def run_episode_with_text_policy(
@@ -64,9 +85,9 @@ def run_episode_with_text_policy(
 ) -> EpisodeResult:
     """Roll one episode forward under a text-in / text-out policy.
 
-    The policy is invoked at every step. If the completion fails to
-    parse into a valid action the scripted heuristic is used instead;
-    this keeps early-training trajectories from deadlocking.
+    Used for evaluation and debugging only. Falls back to the scripted
+    heuristic when the policy returns unparseable output, so the episode
+    always reaches a terminal state. **Not** used for training reward.
     """
 
     task = get_task(task_id)
@@ -106,23 +127,87 @@ def run_episode_with_text_policy(
     )
 
 
+def _advance_to_state(
+    task_id: str, state_step: int
+) -> tuple[ChargebackOpsEnvironment, ChargebackOpsObservation] | None:
+    """Reset env and replay heuristic for ``state_step`` steps.
+
+    Returns ``None`` if the heuristic terminates the episode before
+    reaching ``state_step`` (e.g. dataset went stale).
+    """
+
+    env = ChargebackOpsEnvironment()
+    obs = env.reset(task_id=task_id)
+    for _ in range(state_step):
+        if obs.done:
+            return None
+        heur = _heuristic_policy(obs.model_dump())
+        if heur is None:
+            return None
+        obs = env.step(heur)
+    if obs.done:
+        return None
+    return env, obs
+
+
+def _score_action_match(
+    action: ChargebackOpsAction,
+    heuristic: ChargebackOpsAction,
+    available_actions: list[str],
+) -> float:
+    """Score a model action against the oracle (heuristic) at this state.
+
+    Tiers (chosen for non-degenerate reward variance under GRPO sampling):
+
+    * 0.0 — parse-fail (handled by caller before calling this).
+    * 0.1 — parses, but action_type not in the env's allowed set at this
+      state. The model emitted valid JSON but picked an impossible move.
+    * 0.4 — same valid action_type as heuristic neighbourhood but a
+      different action_type than the oracle. Valid exploration, low credit.
+    * 0.7 — right action_type, wrong target (e.g. picked a different case
+      or system than the oracle). Right idea, wrong object.
+    * 1.0 — exact match on action_type + targeted fields.
+    """
+
+    if action.action_type not in available_actions:
+        return 0.1
+
+    if action.action_type != heuristic.action_type:
+        return 0.4
+
+    if heuristic.case_id and action.case_id != heuristic.case_id:
+        return 0.7
+
+    if heuristic.system_name and action.system_name != heuristic.system_name:
+        return 0.7
+
+    return 1.0
+
+
 def compute_reward(
     prompts: Sequence[str],
     completions: Sequence[str],
     *,
     task_ids: Sequence[str] | None = None,
+    state_steps: Sequence[int] | None = None,
     **_: Any,
 ) -> list[float]:
-    """GRPO-style reward function.
+    """GRPO-style per-action reward.
 
-    Each ``completion`` is replayed as a *single* action. The remainder
-    of the episode is driven by the scripted heuristic, so the reward
-    signal rewards the model for picking a good first move from a
-    given observation. This matches the behaviour TRL expects: one
-    ``(prompt, completion)`` pair → one scalar reward.
+    For each ``(task_id, state_step, completion)`` triple:
 
-    ``task_ids`` optionally binds each prompt to a task id for env
-    replay. When omitted, the headline catalog is cycled.
+    1. Reset env to ``task_id`` and replay the heuristic for
+       ``state_step`` steps to land on the dataset state.
+    2. Parse the completion into an action.
+    3. Score the action against the heuristic oracle at that state via
+       :func:`_score_action_match`.
+
+    No fallback to the heuristic on parse-fail (the prior design did
+    this; it created a reward floor that flattened group variance and
+    starved GRPO of gradient signal).
+
+    ``state_steps`` defaults to all-zero (initial state) when omitted, so
+    legacy callers that only pass ``task_ids`` still work.
     """
 
     if task_ids is None:
@@ -132,25 +217,74 @@ def compute_reward(
         raise ValueError(
             "prompts, completions, and task_ids must all have the same length"
         )
+    if state_steps is None:
+        state_steps = [0] * len(prompts)
+    if len(state_steps) != len(prompts):
+        raise ValueError("state_steps must have the same length as prompts")
 
     rewards: list[float] = []
-    for task_id, completion in zip(task_ids, completions):
-        first_action = action_from_completion(completion)
+    for task_id, state_step, completion in zip(task_ids, state_steps, completions):
+        action = action_from_completion(completion)
+        if action is None:
+            rewards.append(0.0)
+            continue
 
-        def _once(_prompt: str, _used=[False], _action=first_action) -> str:
-            if _used[0] or _action is None:
-                return ""
-            _used[0] = True
-            return completion
+        advanced = _advance_to_state(task_id, int(state_step))
+        if advanced is None:
+            rewards.append(0.0)
+            continue
+        _env, obs = advanced
 
-        result = run_episode_with_text_policy(task_id, _once)
-        rewards.append(result.score)
+        heur = _heuristic_policy(obs.model_dump())
+        if heur is None:
+            rewards.append(0.0)
+            continue
+
+        rewards.append(
+            _score_action_match(action, heur, list(obs.available_actions))
+        )
     return rewards
+
+
+def build_state_action_dataset(
+    task_ids: Sequence[str],
+    *,
+    max_states_per_task: int = 12,
+) -> list[dict[str, Any]]:
+    """Roll the heuristic on each task and capture (state, oracle) pairs.
+
+    For each task we reset, then step the heuristic forward and record
+    the prompt string + state_step at every state until termination or
+    ``max_states_per_task``. The resulting list is suitable as a TRL
+    dataset (each row carries ``prompt``, ``task_id``, ``state_step``).
+    """
+
+    samples: list[dict[str, Any]] = []
+    for task_id in task_ids:
+        env = ChargebackOpsEnvironment()
+        obs = env.reset(task_id=task_id)
+        for state_step in range(max_states_per_task):
+            if obs.done:
+                break
+            samples.append(
+                {
+                    "task_id": task_id,
+                    "state_step": state_step,
+                    "prompt": build_prompt(obs.model_dump()),
+                }
+            )
+            heur = _heuristic_policy(obs.model_dump())
+            if heur is None:
+                break
+            obs = env.step(heur)
+    return samples
 
 
 __all__ = [
     "EpisodeResult",
+    "StateActionSample",
     "TextPolicyFn",
+    "build_state_action_dataset",
     "compute_reward",
     "run_episode_with_text_policy",
 ]

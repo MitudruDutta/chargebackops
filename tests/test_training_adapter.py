@@ -17,6 +17,7 @@ from training.env_adapter import (
     parse_completion,
 )
 from training.reward_adapter import (
+    build_state_action_dataset,
     compute_reward,
     run_episode_with_text_policy,
 )
@@ -115,17 +116,107 @@ def test_run_episode_falls_back_to_heuristic_on_empty_completion():
     assert result.score > 0.0  # heuristic fallback still scores
 
 
-def test_compute_reward_matches_episode_score():
-    """Single completion + heuristic tail reproduces the heuristic score."""
-    task = get_task("goods_not_received_easy")
-    prompts = ["unused"]
-    completions = [""]  # triggers heuristic fallback on the first action
+def test_compute_reward_unparseable_returns_zero():
+    """Per-action scorer must NOT fall back to heuristic on parse-fail.
+
+    The previous fallback design poisoned the GRPO signal: garbage
+    completions earned ~0.96 reward (heuristic played the episode), so
+    the model learned that emitting garbage was optimal and group
+    reward variance collapsed to ~0.005, killing the gradient.
+    """
+
     rewards = compute_reward(
-        prompts, completions, task_ids=[task.task_id]
+        ["unused"], [""], task_ids=["goods_not_received_easy"]
     )
-    assert len(rewards) == 1
-    assert 0.0 <= rewards[0] <= 1.0
-    assert rewards[0] > 0.5  # heuristic scores ~0.97 on this task
+    assert rewards == [0.0]
+
+
+def test_compute_reward_exact_match_scores_one():
+    """Completion that matches the heuristic action exactly gets 1.0."""
+
+    import json
+
+    from runners.benchmark_runner import heuristic_policy
+    from server.chargeback_ops_environment import ChargebackOpsEnvironment
+
+    env = ChargebackOpsEnvironment()
+    obs = env.reset(task_id="goods_not_received_easy")
+    oracle = heuristic_policy(obs.model_dump())
+    completion = json.dumps(oracle.model_dump(exclude_none=True))
+
+    rewards = compute_reward(
+        ["unused"], [completion], task_ids=["goods_not_received_easy"]
+    )
+    assert rewards == [1.0]
+
+
+def test_compute_reward_unavailable_action_scores_low():
+    """Valid JSON but action_type not allowed at this state → 0.1."""
+
+    # First state on goods_not_received_easy only allows ``select_case``.
+    completion = '{"action_type": "submit_representment", "case_id": "CB-E1"}'
+    rewards = compute_reward(
+        ["unused"], [completion], task_ids=["goods_not_received_easy"]
+    )
+    assert rewards == [0.1]
+
+
+def test_compute_reward_has_real_variance_across_diverse_completions():
+    """Diverse completions must produce distinct rewards (the whole point).
+
+    The prior design produced std ≈ 0.005 across 6 wildly different
+    completions because the heuristic dominated the episode. New design
+    should give ≥ 3 distinct reward values across the same set.
+    """
+
+    import json
+
+    from runners.benchmark_runner import heuristic_policy
+    from server.chargeback_ops_environment import ChargebackOpsEnvironment
+
+    env = ChargebackOpsEnvironment()
+    obs = env.reset(task_id="goods_not_received_easy")
+    oracle = heuristic_policy(obs.model_dump())
+
+    completions = [
+        "",  # parse-fail → 0.0
+        "garbage no json",  # parse-fail → 0.0
+        '{"action_type": "submit_representment", "case_id": "CB-E1"}',  # unavailable → 0.1
+        json.dumps(oracle.model_dump(exclude_none=True)),  # exact → 1.0
+    ]
+    rewards = compute_reward(
+        ["x"] * 4, completions, task_ids=["goods_not_received_easy"] * 4
+    )
+    assert len(set(rewards)) >= 3
+    assert max(rewards) - min(rewards) >= 0.5
+
+
+def test_compute_reward_state_steps_advance_env():
+    """state_steps replays heuristic to reach mid-episode states."""
+
+    rewards = compute_reward(
+        ["x", "x"],
+        ["", ""],
+        task_ids=["goods_not_received_easy", "goods_not_received_easy"],
+        state_steps=[0, 2],
+    )
+    # Both unparseable → both 0.0 regardless of state.
+    assert rewards == [0.0, 0.0]
+
+
+def test_build_state_action_dataset_covers_multiple_states():
+    """Heuristic rollout must yield several (state, oracle) pairs per task."""
+
+    samples = build_state_action_dataset(
+        ["goods_not_received_easy"], max_states_per_task=8
+    )
+    assert len(samples) >= 2
+    state_steps = [s["state_step"] for s in samples]
+    assert state_steps == sorted(state_steps)
+    assert state_steps[0] == 0
+    for s in samples:
+        assert s["task_id"] == "goods_not_received_easy"
+        assert "OBSERVATION:" in s["prompt"]
 
 
 def test_compute_reward_rejects_mismatched_lengths():
