@@ -96,9 +96,20 @@ accepts in round 1 and the two policies produce identical trajectories.
 
 Baselines drawn as dashed lines: `heuristic`, `concede_all`, `naive`.
 
+### Per-family curve (multi-task RL view)
+
+The aggregate curve hides where improvement actually lands. The notebook's
+section 9 re-evaluates each checkpoint grouped by difficulty
+(`easy`/`medium`/`hard`/`nightmare`) and overlays per-cohort heuristic
+floors from the 28-task multi-seed grid. A healthy run shows monotone
+gains in every family; a flat `nightmare` line with rising `easy` is the
+overfit-to-cheap-tasks failure mode the grouped view exists to surface.
+
+![Training curve by family](figures/training_curve_by_family.png)
+
 | Step | Mean score (headline) | Source |
 | --- | --- | --- |
-| 0   | _placeholder_ | untrained Qwen2.5-0.5B-Instruct |
+| 0   | _placeholder_ | untrained Qwen3.5-0.8B |
 | 50  | _placeholder_ | GRPO checkpoint |
 | 100 | _placeholder_ | GRPO checkpoint |
 | 150 | _placeholder_ | GRPO checkpoint |
