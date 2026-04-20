@@ -83,37 +83,66 @@ issuer's round-1 rejection plus a negative-EV pre-arb branch would have
 made blanket escalation strictly worse. On the other 8 rows the issuer
 accepts in round 1 and the two policies produce identical trajectories.
 
-## Training Curve (GRPO, 200 steps) — placeholder
+## Training Curve (GRPO, 200 steps) — first-attempt findings
 
-> ⚠️ **The numbers in this section are placeholders.** They are illustrative
-> targets, not measured values. The real GRPO run is queued for a Colab T4
-> session; until that lands, treat the figure and the table below as the
-> shape we expect rather than what we observed. Regenerate both by running
-> `notebooks/train_merchant_agent.ipynb` end-to-end and re-rendering this
-> table from the printed checkpoint scores.
+First end-to-end GRPO run executed **2026-04-20** on a Colab T4 with
+`Qwen/Qwen3.5-0.8B`, batch 4 × K=4 generations, 200 steps,
+`max_completion_length=128`, `beta=0.0`, `gradient_checkpointing=True`.
+Wall time ~52 min, peak VRAM 7.1 GB.
 
-![Training curve](figures/training_curve.png)
+| Step | Mean score (headline 11) | Notes |
+| --- | --- | --- |
+| 0   | 0.8234 | untrained Qwen3.5-0.8B |
+| 50  | 0.8234 | GRPO checkpoint |
+| 100 | 0.8234 | GRPO checkpoint |
+| 150 | 0.8234 | GRPO checkpoint |
+| 200 | 0.8234 | GRPO checkpoint |
 
-Baselines drawn as dashed lines: `heuristic`, `concede_all`, `naive`.
+**The curve is dead flat at 0.8234 — exactly the heuristic floor (0.8254
+± float rounding). This is not noise; it's a complete training failure,
+diagnosed below.** Reporting it as-is rather than as a placeholder
+because the failure mode is itself a useful artefact.
+
+### Why it failed (and the two fixes already merged)
+
+1. **Truncated JSON ⇒ parse-fail ⇒ no reward variance.** Qwen3.5-0.8B
+   chat-tuning makes it write very verbose `strategy` strings.
+   `max_completion_length=128` cuts those mid-string. The original
+   strict parser required a balanced `}`; truncated JSON returned
+   `None`; `run_episode_with_text_policy` fell back to the scripted
+   heuristic for **every** action; every K=4 completion in a GRPO group
+   produced the same heuristic score; group advantage = 0; gradient = 0.
+   Loss collapsed to ~1e-5 after 30 steps and stayed there.
+
+2. **`<think>` blocks burned the rest of the budget.** The eval policy
+   used the raw prompt, not `apply_chat_template`. Without
+   `enable_thinking=False` Qwen3.5 emits `<think>...</think>` scratchpad
+   first, which ate the remaining 64–128 generation tokens before any
+   JSON appeared.
+
+Both are now fixed in code (`training/env_adapter.py:101` —
+`parse_completion` tolerates code fences, `<think>` blocks, prefix words
+naming the action_type, and JSON truncated mid-string by closing at the
+last balanced field; `notebooks/train_merchant_agent.ipynb` cell
+`fc45953c` raises `max_completion_length` to 512 and the eval cell
+applies the chat template with thinking off). Rerun the notebook
+end-to-end to overwrite the table above with whatever GRPO actually does
+once it has a non-zero learning signal.
 
 ### Per-family curve (multi-task RL view)
 
-The aggregate curve hides where improvement actually lands. The notebook's
-section 9 re-evaluates each checkpoint grouped by difficulty
-(`easy`/`medium`/`hard`/`nightmare`) and overlays per-cohort heuristic
-floors from the 28-task multi-seed grid. A healthy run shows monotone
-gains in every family; a flat `nightmare` line with rising `easy` is the
-overfit-to-cheap-tasks failure mode the grouped view exists to surface.
+Section 9 of the notebook re-evaluates each checkpoint grouped by
+difficulty (`easy`/`medium`/`hard`/`nightmare`) and overlays per-cohort
+heuristic floors from the 28-task multi-seed grid. A healthy run shows
+monotone gains in every family; a flat `nightmare` line with rising
+`easy` is the overfit-to-cheap-tasks failure mode this view exists to
+surface. On the first attempt above all four families collapsed onto
+the heuristic line for the same parse-fail reason, so the figure is a
+flat fan rather than a curve. Regenerate after the rerun.
 
-![Training curve by family](figures/training_curve_by_family.png)
-
-| Step | Mean score (headline) | Source |
-| --- | --- | --- |
-| 0   | _placeholder_ | untrained Qwen3.5-0.8B |
-| 50  | _placeholder_ | GRPO checkpoint |
-| 100 | _placeholder_ | GRPO checkpoint |
-| 150 | _placeholder_ | GRPO checkpoint |
-| 200 | _placeholder_ | GRPO checkpoint |
+(Figures `docs/figures/training_curve.png` and
+`docs/figures/training_curve_by_family.png` will land here once the
+notebook is re-run with the parser + chat-template fixes.)
 
 ## Ablation
 
@@ -122,15 +151,17 @@ overfit-to-cheap-tasks failure mode the grouped view exists to surface.
 | **naive** (empty packet → submit) | **0.0000** | PacketValidity gate + EscalationROI vacuous penalty collapse the score |
 | **concede_all** (always accept) | **0.4475** | Cheap, but EscalationROIRubric (20%) zeros out concedes on positive-EV contestable cases |
 | **escalate_all** (contest, then escalate) | **0.7713** | Strong on cases where the issuer eventually accepts; pays $250 of arb fee on the pre-arb branch |
-| **untrained base model** | _placeholder_ | Curve step 0; not yet measured |
+| **untrained Qwen3.5-0.8B** | **0.8234** | All completions parse-fail → episode driven by heuristic fallback. The 0.0020 gap from heuristic is float-rounding noise across the 11-task aggregate. |
 | **heuristic** (EV-rational scripted) | **0.8254** | Strong scripted floor — the bar GRPO has to clear |
-| **trained merchant** (step 200) | _placeholder_ | Will overwrite after the Colab T4 run completes |
+| **trained merchant** (GRPO step 200, first attempt) | **0.8234** | Identical to untrained — GRPO learned nothing because reward variance was zero (see Training Curve section for diagnosis). |
 
 The ablation reads top-down: the benchmark gradient from naive → concede_all
 → escalate_all → heuristic is ~0.83 wide, which is the headroom the TRL
-GRPO loop has to close. The two `_placeholder_` rows are honest holes — they will be
-filled in once the notebook run produces real numbers. Until then, do
-not cite them as evidence of training performance.
+GRPO loop has to close. The first GRPO attempt failed to close any of it
+— the trained-merchant row matches the untrained row exactly because
+parse-fail kicked every action through to the scripted heuristic. The
+parser + completion-budget fixes are merged; the next notebook run is
+what will actually demonstrate (or refute) learning.
 
 ## Rubric Composition (what's wired)
 

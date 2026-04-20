@@ -9,6 +9,7 @@ side effects — so they are cheap to unit-test.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 try:
@@ -99,27 +100,83 @@ def build_prompt(observation: dict[str, Any]) -> str:
 
 
 def parse_completion(text: str) -> dict[str, Any] | None:
-    """Parse a model completion into a raw action dict, or return None."""
+    """Parse a model completion into a raw action dict, or return None.
+
+    Tolerates: code fences, leading prose / `<think>` blocks, prefix words
+    naming the action_type before the JSON, and JSON truncated mid-string
+    (auto-closes at the last balanced field). Required because untrained
+    Qwen-style chat models often emit valid JSON head + truncated tail —
+    a strict parser would zero out the entire training signal.
+    """
 
     if not text:
         return None
     cleaned = text.strip()
-    # Strip common code-fence patterns.
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`").strip()
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].lstrip()
-    # Find the first {...} block so prose before JSON is tolerated.
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+
     start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    if start == -1:
         return None
+    prefix = cleaned[:start].strip()
+    body = cleaned[start:]
+
+    data: dict[str, Any] | None = None
     try:
-        data = json.loads(cleaned[start : end + 1])
+        candidate = json.loads(body)
+        if isinstance(candidate, dict):
+            data = candidate
     except json.JSONDecodeError:
+        pass
+
+    if data is None:
+        depth = 0
+        in_str = False
+        esc = False
+        last_safe = -1
+        for i, ch in enumerate(body):
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        candidate = json.loads(body[: i + 1])
+                        if isinstance(candidate, dict):
+                            data = candidate
+                            break
+                    except json.JSONDecodeError:
+                        pass
+            elif ch == "," and depth == 1:
+                last_safe = i
+        if data is None and last_safe != -1:
+            try:
+                candidate = json.loads(body[:last_safe] + "}")
+                if isinstance(candidate, dict):
+                    data = candidate
+            except json.JSONDecodeError:
+                pass
+
+    if data is None:
         return None
-    if not isinstance(data, dict):
-        return None
+
+    if "action_type" not in data and prefix:
+        m = re.match(r"[a-z_][a-z0-9_]*", prefix.lower())
+        if m:
+            data["action_type"] = m.group(0)
+
     return {k: v for k, v in data.items() if k in _ALLOWED_ACTION_FIELDS}
 
 

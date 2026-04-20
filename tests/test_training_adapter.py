@@ -74,6 +74,36 @@ def test_action_from_completion_returns_none_on_bad_type():
     assert action_from_completion(payload) is None
 
 
+def test_parse_completion_handles_truncated_json():
+    """Mid-string truncation: tolerate by closing at last balanced field."""
+    payload = (
+        '```json\n{"action_type": "select_case", "case_id": "CB-E1", '
+        '"strategy": "Select the case ID to procee'
+    )
+    parsed = parse_completion(payload)
+    assert parsed is not None
+    assert parsed["action_type"] == "select_case"
+    assert parsed["case_id"] == "CB-E1"
+
+
+def test_parse_completion_strips_think_block():
+    payload = (
+        '<think>\nlet me think about this\n</think>\n'
+        '{"action_type": "select_case", "case_id": "CB-1"}'
+    )
+    parsed = parse_completion(payload)
+    assert parsed == {"action_type": "select_case", "case_id": "CB-1"}
+
+
+def test_parse_completion_infers_action_type_from_prefix():
+    """Model emits action name as prose then JSON without action_type field."""
+    payload = ' select_case\n{"case_id": "CB-X", "strategy": "go"}'
+    parsed = parse_completion(payload)
+    assert parsed is not None
+    assert parsed["action_type"] == "select_case"
+    assert parsed["case_id"] == "CB-X"
+
+
 def test_run_episode_falls_back_to_heuristic_on_empty_completion():
     """Unparseable completions must not deadlock the episode."""
     result = run_episode_with_text_policy(
