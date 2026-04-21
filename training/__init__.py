@@ -25,13 +25,21 @@ from .reward_adapter import (
     compute_reward,
     run_episode_with_text_policy,
 )
+from .sft_dataset import (
+    SFTSample,
+    action_to_completion,
+    build_sft_dataset,
+)
 
 __all__ = [
     "CheckpointEval",
     "EpisodeResult",
+    "SFTSample",
     "TaskOutcome",
     "action_from_completion",
+    "action_to_completion",
     "build_prompt",
+    "build_sft_dataset",
     "compute_reward",
     "evaluate_checkpoint",
     "evaluate_policy_across_tasks",

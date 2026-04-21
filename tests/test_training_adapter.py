@@ -224,3 +224,31 @@ def test_compute_reward_rejects_mismatched_lengths():
 
     with pytest.raises(ValueError):
         compute_reward(["a"], ["b", "c"], task_ids=["goods_not_received_easy"])
+
+
+def test_run_episode_breaks_select_case_loop():
+    """Degenerate model that always emits select_case must not deadlock.
+
+    Real failure mode observed in Colab eval: a Qwen3.5 checkpoint
+    after 300 GRPO steps emitted ``select_case`` at every state. The
+    env silently no-ops the second ``select_case``, the prompt stays
+    identical, the model emits the same string, score stays 0 because
+    ``done`` never flips. Stall detection must force-fallback to the
+    heuristic so the episode reaches grading.
+    """
+
+    import json
+
+    select_case_payload = json.dumps(
+        {"action_type": "select_case", "case_id": "CB-E1"}
+    )
+
+    result = run_episode_with_text_policy(
+        "goods_not_received_easy",
+        text_policy=lambda _prompt: select_case_payload,
+    )
+    assert result.steps_used > 0
+    assert result.score > 0.0, (
+        f"stall detection failed: score={result.score} "
+        f"means episode never reached terminal grading"
+    )

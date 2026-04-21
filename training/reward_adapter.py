@@ -76,6 +76,74 @@ def _fallback_action(
     return _heuristic_policy(observation.model_dump())
 
 
+def _state_signature(observation: ChargebackOpsObservation) -> tuple:
+    """Stable hashable snapshot of the env state visible to the policy.
+
+    Used to detect rollout stalls — if step() leaves this signature
+    unchanged, the model picked an action the env silently no-op'd
+    (e.g. ``select_case`` when a case is already selected) and is
+    about to loop forever on the same prompt. ``steps_remaining`` is
+    deliberately excluded: it decrements on every step regardless of
+    whether the env actually progressed, so including it would mask
+    every real stall.
+    """
+
+    visible = observation.visible_case
+    visible_sig: tuple
+    if visible is None:
+        visible_sig = ()
+    else:
+        visible_sig = (
+            visible.case_id,
+            visible.status,
+            visible.current_strategy,
+            len(visible.attached_evidence),
+            len(visible.retrieved_evidence),
+        )
+    return (
+        observation.selected_case_id,
+        tuple(sorted(observation.available_actions)),
+        observation.done,
+        visible_sig,
+    )
+
+
+def _action_key(action: ChargebackOpsAction) -> tuple:
+    """Hashable identity for "have we tried this exact action here?" check."""
+
+    return (
+        action.action_type,
+        action.case_id,
+        action.system_name,
+        tuple(action.evidence_ids),
+        action.strategy,
+    )
+
+
+def _predicted_noop(
+    action: ChargebackOpsAction,
+    observation: ChargebackOpsObservation,
+) -> bool:
+    """Cheap upfront check that the env will silently no-op this action.
+
+    Catches the dominant Qwen failure mode (always emit ``select_case``
+    even after a case is already selected). Without this check the
+    model burns an env step per state on the duplicate ``select_case``,
+    blowing the per-task step budget before the heuristic fallback can
+    finish the episode. We only hard-code rules we *know* the env
+    treats as no-ops; everything else flows through the env and the
+    post-hoc ``tried_at_state`` cache.
+    """
+
+    if (
+        action.action_type == "select_case"
+        and observation.selected_case_id is not None
+        and action.case_id == observation.selected_case_id
+    ):
+        return True
+    return False
+
+
 def run_episode_with_text_policy(
     task_id: str,
     text_policy: TextPolicyFn,
@@ -86,8 +154,12 @@ def run_episode_with_text_policy(
     """Roll one episode forward under a text-in / text-out policy.
 
     Used for evaluation and debugging only. Falls back to the scripted
-    heuristic when the policy returns unparseable output, so the episode
-    always reaches a terminal state. **Not** used for training reward.
+    heuristic when the policy returns unparseable output **or** when
+    the model picks an action it has already tried from the current
+    state (the env silently no-ops the duplicate, ``done`` never flips,
+    score stays 0). The repeat-action guard catches the dominant Qwen
+    failure mode where a checkpoint always emits ``select_case`` and
+    the episode loops forever. **Not** used for training reward.
     """
 
     task = get_task(task_id)
@@ -96,6 +168,7 @@ def run_episode_with_text_policy(
     step_budget = (max_steps if max_steps is not None else task.max_steps) + 5
     steps = 0
     invalid = 0
+    tried_at_state: dict[tuple, set[tuple]] = {}
     prompts: list[str] = []
     completions: list[str] = []
 
@@ -104,16 +177,42 @@ def run_episode_with_text_policy(
         prompt = build_prompt(obs_dict)
         completion = text_policy(prompt)
         action = action_from_completion(completion)
+        used_fallback = False
         if action is None:
             invalid += 1
             action = _fallback_action(observation)
+            used_fallback = True
             if action is None:
                 break
+
+        if not used_fallback and _predicted_noop(action, observation):
+            fallback = _fallback_action(observation)
+            if fallback is not None:
+                action = fallback
+                used_fallback = True
+
+        state_sig = _state_signature(observation)
+        attempted = tried_at_state.setdefault(state_sig, set())
+        action_key = _action_key(action)
+        if action_key in attempted and not used_fallback:
+            fallback = _fallback_action(observation)
+            if fallback is None:
+                break
+            fallback_key = _action_key(fallback)
+            if fallback_key in attempted:
+                # Heuristic also stuck — bail out, score whatever we have.
+                break
+            action = fallback
+            action_key = fallback_key
+            used_fallback = True
+        attempted.add(action_key)
+
         observation = env.step(action)
         steps += 1
         if capture_trace:
             prompts.append(prompt)
-            completions.append(completion)
+            tag = "<<fallback>> " if used_fallback else ""
+            completions.append(f"{tag}{completion}")
 
     report = env.state.grader_report
     score = float(report.normalized_score) if report is not None else 0.0
