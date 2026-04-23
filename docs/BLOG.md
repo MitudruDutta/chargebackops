@@ -88,9 +88,9 @@ offline, no LLM involved:
 | Policy | Headline avg | What it does |
 | --- | --- | --- |
 | `naive` | 0.0000 | Submit an empty packet. Packet-validity gate zeros it. |
-| `concede_all` | ~0.57 | Always accept the chargeback. Cheap but gives up positive-EV cases. |
-| `escalate_all` | ~0.84 | Contest like the heuristic, then always escalate when the Issuer rejects. |
-| `heuristic` | ~0.80 | First-candidate pick from the rule-based candidate generator. |
+| `concede_all` | 0.4435 | Always accept the chargeback. Cheap but gives up positive-EV cases. |
+| `escalate_all` | 0.7668 | Contest like the heuristic, then always escalate when the Issuer rejects. |
+| `heuristic` | 0.8132 | EV-rational first-candidate pick from the rule-based candidate generator. |
 
 Discrimination delta (heuristic − naive) is **~0.80** on the headline
 catalog and similar on a 28-task multi-seed grid (7 seeds × 4
@@ -106,29 +106,28 @@ evidence. Two real signals show up in the discrimination column.
 Training uses TRL's `GRPOTrainer` with the rubric as the reward function,
 a prompt dataset sampled from fresh environment resets across the headline
 catalog, and a small instruction-tuned base model so the loop fits a free
-Colab T4. The reward function is a direct replay: parse the completion
-into a typed `ChargebackOpsAction`, run the rest of the episode under the
-scripted heuristic, and return the normalised episode score.
+Colab T4. The current reward function is a per-action verifier: parse the
+completion into a typed `ChargebackOpsAction`, reconstruct the recorded
+environment state, and score the action against the heuristic oracle.
 
 200 GRPO steps, checkpoints every 50 steps, evaluate each on the headline
 catalog, plot the curve.
 
 Two reward-shaping decisions made the curve trainable at all:
 
-1. **Partial credit on invalid actions.** The reward adapter falls back
-   to the scripted heuristic when the completion fails to parse. Early
-   in training every completion is unparseable, so without this the
-   model would see rewards of 0.0 for every rollout and the gradient
-   would be flat. Letting the heuristic drive the tail keeps the
-   reward signal alive while the model learns to emit valid JSON.
+1. **No reward for parse failure.** The reward adapter deliberately does
+   not fall back to the scripted heuristic when completion parsing fails.
+   A previous design did that and poisoned GRPO: garbage completions earned
+   near-heuristic scores, group advantage collapsed to zero, and the model
+   learned nothing. Parse failure now earns 0.0.
 
-2. **Single-action reward replay.** TRL wants one scalar per
+2. **Tiered single-action reward.** TRL wants one scalar per
    `(prompt, completion)` pair. The trainer reads the first action out
-   of the completion, applies it, then replays the rest under the
-   heuristic. The model is effectively being trained on "what is the
-   best first move from this observation" — a much tighter
-   credit-assignment problem than "what is the best episode-long
-   trajectory".
+   of the completion and scores it as parse fail `0.0`, unavailable
+   action `0.1`, wrong action type `0.4`, right action/wrong target `0.7`,
+   exact oracle match `1.0`. The model is effectively being trained on
+   "what is the best next move from this observation" — a much tighter
+   credit-assignment problem than "what is the best episode-long trajectory".
 
 A trained-vs-baseline curve lives at `docs/figures/training_curve.png`
 once the Colab notebook has been run end-to-end.

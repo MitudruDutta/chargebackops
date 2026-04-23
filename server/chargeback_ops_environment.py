@@ -168,6 +168,12 @@ class ChargebackOpsEnvironment(
             if case_id and case_id in self._progress_by_case:
                 self._progress_by_case[case_id].invalid_actions += 1
 
+        event_reward, event_messages = self._advance_pending_events()
+        reward += event_reward
+        if event_messages:
+            suffix = " ".join(event_messages)
+            result = f"{result} Updates: {suffix}" if result else suffix
+
         reward += self._apply_deadline_penalties()
         done = self._check_done()
         if done:
@@ -207,7 +213,14 @@ class ChargebackOpsEnvironment(
     def _apply_action(self, action: ChargebackOpsAction) -> tuple[float, str]:
         if action.action_type == "select_case":
             return self._select_case(action.case_id)
+        if action.action_type == "wait_for_updates":
+            return self._wait_for_updates()
         case = self._require_case(action.case_id)
+        progress = self._progress_by_case[case.case_id]
+        if progress.resolution_status == "pending_issuer_review":
+            raise ValueError(
+                f"Case {case.case_id} is pending issuer review; select another case or wait for updates."
+            )
 
         if action.action_type == "inspect_case":
             return self._inspect_case(case)
@@ -241,11 +254,37 @@ class ChargebackOpsEnvironment(
         if not case_id:
             raise ValueError("select_case requires case_id.")
         case = self._lookup_case(case_id)
+        if not self._case_arrived(case):
+            raise ValueError(f"Case {case.case_id} has not arrived in the queue yet.")
         self._selected_case_id = case.case_id
         progress = self._progress_by_case[case.case_id]
         if progress.resolution_status != "open":
             return -0.02, f"Case {case.case_id} is already resolved."
         return 0.02, f"Selected case {case.case_id}."
+
+    def _wait_for_updates(self) -> tuple[float, str]:
+        """Advance the clock when all visible work is blocked.
+
+        Long-horizon tasks include pending issuer reviews, delayed evidence
+        pulls, and future case arrivals. Waiting while work is available is
+        penalised; waiting when the backlog is genuinely blocked is a small
+        neutral/positive planning action.
+        """
+
+        open_visible = [
+            case
+            for case in self._visible_task_cases()
+            if self._progress_by_case[case.case_id].resolution_status == "open"
+        ]
+        if open_visible:
+            return -0.04, "Waited while open cases were available."
+        pending = self._pending_work_count()
+        if pending > 0:
+            return 0.02, f"Waited for {pending} pending updates."
+        future = self._future_case_count()
+        if future > 0:
+            return 0.01, f"Waited for future case arrivals ({future} not yet visible)."
+        return -0.03, "No pending updates or future arrivals to wait for."
 
     def _inspect_case(self, case: InternalCase) -> tuple[float, str]:
         progress = self._progress_by_case[case.case_id]
@@ -263,6 +302,11 @@ class ChargebackOpsEnvironment(
             raise ValueError("query_system requires system_name.")
         progress = self._progress_by_case[case.case_id]
         if system_name in progress.revealed_systems:
+            if system_name in progress.pending_evidence_systems:
+                return (
+                    -0.01,
+                    f"System '{system_name}' is already queued for delayed evidence on case {case.case_id}.",
+                )
             progress.duplicate_queries += 1
             return (
                 -0.03,
@@ -270,6 +314,19 @@ class ChargebackOpsEnvironment(
             )
 
         progress.revealed_systems.add(system_name)
+        if (
+            system_name in case.delayed_systems
+            and case.evidence_response_delay_steps > 0
+        ):
+            progress.pending_evidence_systems[system_name] = (
+                self._state.step_count + case.evidence_response_delay_steps
+            )
+            return (
+                0.02,
+                f"Queued delayed {system_name} evidence for case {case.case_id}; expected in "
+                f"{case.evidence_response_delay_steps} steps.",
+            )
+
         new_evidence = case.evidence_by_system.get(system_name, ())
         progress.retrieved_evidence_ids.update(
             item.evidence_id for item in new_evidence
@@ -379,6 +436,7 @@ class ChargebackOpsEnvironment(
     ) -> tuple[float, str]:
         progress = self._progress_by_case[case.case_id]
         progress.submit_attempts += 1
+        progress.merchant_submitted_at_step = self._state.step_count
         if note:
             progress.representment_note = note
         if progress.current_strategy != "contest":
@@ -397,41 +455,25 @@ class ChargebackOpsEnvironment(
                 f"Representment for case {case.case_id} was submitted after the deadline.",
             )
 
+        if case.issuer_response_delay_steps > 0:
+            progress.resolution_status = "pending_issuer_review"
+            progress.pending_issuer_round_number = 1
+            progress.pending_issuer_due_step = (
+                self._state.step_count + case.issuer_response_delay_steps
+            )
+            return (
+                0.12,
+                f"Submitted representment for case {case.case_id}; issuer review is pending "
+                f"for {case.issuer_response_delay_steps} steps.",
+            )
+
         # Every on-time packet is handed to the scripted Issuer. Missing
         # required evidence and attached harmful evidence are not terminal —
         # they push the score down so the Issuer requests more evidence
         # (round 2) or escalates to arbitration (round 3), exercising the
         # multi-round dispute path the rubric is built for.
         review = self._invoke_issuer_review(case, progress, round_number=1)
-
-        if review.decision == IssuerDecision.ACCEPT:
-            progress.final_resolution = "contest"
-            progress.resolution_status = "won"
-            progress.resolved_at_step = self._state.step_count
-            progress.final_economic_outcome = case.amount
-            return (
-                0.45,
-                f"Issuer accepted representment for case {case.case_id} "
-                f"(score {review.evidence_strength_score:.2f}). {review.rationale}",
-            )
-
-        if review.decision == IssuerDecision.REQUEST_MORE_EVIDENCE:
-            progress.round_number = 2
-            progress.resolution_status = "open"
-            return (
-                -0.05,
-                f"Issuer requested compelling evidence for case {case.case_id} "
-                f"(score {review.evidence_strength_score:.2f}). {review.rationale}",
-            )
-
-        # Defensive: Issuer should not escalate from round 1, but handle just in case.
-        progress.final_resolution = "contest"
-        progress.resolution_status = "lost_contest"
-        progress.resolved_at_step = self._state.step_count
-        return (
-            -0.12,
-            f"Issuer escalated case {case.case_id} unexpectedly. {review.rationale}",
-        )
+        return self._apply_issuer_review_result(case, progress, review, round_number=1)
 
     def _invoke_issuer_review(
         self,
@@ -446,6 +488,111 @@ class ChargebackOpsEnvironment(
         progress.issuer_decisions.append(review.decision.value)
         progress.issuer_rationales.append(review.rationale)
         return review
+
+    def _apply_issuer_review_result(
+        self,
+        case: InternalCase,
+        progress: CaseProgress,
+        review: IssuerReview,
+        *,
+        round_number: int,
+    ) -> tuple[float, str]:
+        """Apply a completed Issuer review to case state."""
+
+        progress.pending_issuer_round_number = None
+        progress.pending_issuer_due_step = None
+
+        if round_number == 1:
+            if review.decision == IssuerDecision.ACCEPT:
+                progress.final_resolution = "contest"
+                progress.resolution_status = "won"
+                progress.resolved_at_step = self._state.step_count
+                progress.final_economic_outcome = case.amount
+                return (
+                    0.45,
+                    f"Issuer accepted representment for case {case.case_id} "
+                    f"(score {review.evidence_strength_score:.2f}). {review.rationale}",
+                )
+
+            if review.decision == IssuerDecision.REQUEST_MORE_EVIDENCE:
+                progress.round_number = 2
+                progress.resolution_status = "open"
+                return (
+                    -0.05,
+                    f"Issuer requested compelling evidence for case {case.case_id} "
+                    f"(score {review.evidence_strength_score:.2f}). {review.rationale}",
+                )
+
+            # Defensive: Issuer should not escalate from round 1, but handle it.
+            progress.final_resolution = "contest"
+            progress.resolution_status = "lost_contest"
+            progress.resolved_at_step = self._state.step_count
+            return (
+                -0.12,
+                f"Issuer escalated case {case.case_id} unexpectedly. {review.rationale}",
+            )
+
+        if review.decision == IssuerDecision.ACCEPT:
+            progress.final_resolution = "contest"
+            progress.resolution_status = "won_pre_arb"
+            progress.resolved_at_step = self._state.step_count
+            progress.final_economic_outcome = case.amount
+            return (
+                0.35,
+                f"Issuer accepted pre-arbitration packet for case {case.case_id} "
+                f"(score {review.evidence_strength_score:.2f}). {review.rationale}",
+            )
+
+        ruling = self._apply_arbitration(case, progress)
+        return (
+            self._arbitration_reward(ruling),
+            f"Issuer escalated case {case.case_id} to arbitration "
+            f"(score {review.evidence_strength_score:.2f}). {ruling.rationale}",
+        )
+
+    def _advance_pending_events(self) -> tuple[float, list[str]]:
+        """Resolve delayed evidence pulls and delayed Issuer reviews."""
+
+        reward = 0.0
+        messages: list[str] = []
+
+        for case in self._task.cases:
+            progress = self._progress_by_case[case.case_id]
+
+            due_systems = [
+                system_name
+                for system_name, due_step in progress.pending_evidence_systems.items()
+                if self._state.step_count >= due_step
+            ]
+            for system_name in due_systems:
+                new_evidence = case.evidence_by_system.get(system_name, ())
+                progress.retrieved_evidence_ids.update(
+                    item.evidence_id for item in new_evidence
+                )
+                del progress.pending_evidence_systems[system_name]
+                useful = sum(1 for item in new_evidence if item.helpful)
+                reward += 0.03 if useful else 0.0
+                messages.append(
+                    f"Delayed {system_name} evidence arrived for {case.case_id} "
+                    f"({len(new_evidence)} items)."
+                )
+
+            if (
+                progress.resolution_status == "pending_issuer_review"
+                and progress.pending_issuer_due_step is not None
+                and self._state.step_count >= progress.pending_issuer_due_step
+            ):
+                round_number = progress.pending_issuer_round_number or progress.round_number
+                review = self._invoke_issuer_review(
+                    case, progress, round_number=round_number
+                )
+                review_reward, review_result = self._apply_issuer_review_result(
+                    case, progress, review, round_number=round_number
+                )
+                reward += review_reward
+                messages.append(review_result)
+
+        return reward, messages
 
     def _respond_to_pre_arb(
         self,
@@ -470,6 +617,7 @@ class ChargebackOpsEnvironment(
 
         if note:
             progress.representment_note = note
+        progress.merchant_submitted_at_step = self._state.step_count
 
         all_evidence = self._evidence_map(case)
         added: list[str] = []
@@ -494,27 +642,23 @@ class ChargebackOpsEnvironment(
             else:
                 reward += 0.01
 
-        review = self._invoke_issuer_review(case, progress, round_number=2)
-
-        if review.decision == IssuerDecision.ACCEPT:
-            progress.final_resolution = "contest"
-            progress.resolution_status = "won_pre_arb"
-            progress.resolved_at_step = self._state.step_count
-            progress.final_economic_outcome = case.amount
+        if case.issuer_response_delay_steps > 0:
+            progress.resolution_status = "pending_issuer_review"
+            progress.pending_issuer_round_number = 2
+            progress.pending_issuer_due_step = (
+                self._state.step_count + case.issuer_response_delay_steps
+            )
             return (
-                reward + 0.35,
-                f"Issuer accepted pre-arbitration packet for case {case.case_id} "
-                f"(score {review.evidence_strength_score:.2f}, added "
-                f"{', '.join(added) or 'no new'}). {review.rationale}",
+                reward + 0.08,
+                f"Submitted pre-arbitration response for case {case.case_id} "
+                f"with {', '.join(added) or 'no new'}; issuer review is pending.",
             )
 
-        # ESCALATE_TO_ARBITRATION — issuer files network arbitration.
-        ruling = self._apply_arbitration(case, progress)
-        return (
-            reward + self._arbitration_reward(ruling),
-            f"Issuer escalated case {case.case_id} to arbitration "
-            f"(score {review.evidence_strength_score:.2f}). {ruling.rationale}",
+        review = self._invoke_issuer_review(case, progress, round_number=2)
+        review_reward, review_result = self._apply_issuer_review_result(
+            case, progress, review, round_number=2
         )
+        return reward + review_reward, review_result
 
     def _escalate_to_arbitration(self, case: InternalCase) -> tuple[float, str]:
         """handler: merchant voluntarily files for arbitration."""
@@ -625,6 +769,8 @@ class ChargebackOpsEnvironment(
     def _apply_deadline_penalties(self) -> float:
         penalty = 0.0
         for case in self._task.cases:
+            if not self._case_arrived(case):
+                continue
             progress = self._progress_by_case[case.case_id]
             if (
                 progress.resolution_status == "open"
@@ -645,8 +791,26 @@ class ChargebackOpsEnvironment(
     def _all_cases_resolved(self) -> bool:
         return all(
             progress.resolution_status != "open"
+            and progress.resolution_status != "pending_issuer_review"
             for progress in self._progress_by_case.values()
         )
+
+    def _case_arrived(self, case: InternalCase) -> bool:
+        return self._state.step_count >= case.arrival_step
+
+    def _visible_task_cases(self) -> list[InternalCase]:
+        return [case for case in self._task.cases if self._case_arrived(case)]
+
+    def _future_case_count(self) -> int:
+        return sum(1 for case in self._task.cases if not self._case_arrived(case))
+
+    def _pending_work_count(self) -> int:
+        pending = 0
+        for progress in self._progress_by_case.values():
+            if progress.resolution_status == "pending_issuer_review":
+                pending += 1
+            pending += len(progress.pending_evidence_systems)
+        return pending
 
     def _lookup_case(self, case_id: str) -> InternalCase:
         for case in self._task.cases:
@@ -658,7 +822,10 @@ class ChargebackOpsEnvironment(
         target_case_id = case_id or self._selected_case_id
         if target_case_id is None:
             raise ValueError("Select a case before taking this action.")
-        return self._lookup_case(target_case_id)
+        case = self._lookup_case(target_case_id)
+        if not self._case_arrived(case):
+            raise ValueError(f"Case {case.case_id} has not arrived in the queue yet.")
+        return case
 
     def _evidence_map(self, case: InternalCase):
         return {
@@ -704,11 +871,18 @@ class ChargebackOpsEnvironment(
         resolved_cases = 0
         total_attached = 0
         total_retrieved = 0
+        pending_issuer = 0
+        pending_evidence = 0
 
         for case in self._task.cases:
             progress = self._progress_by_case[case.case_id]
             total_attached += len(progress.attached_evidence_ids)
             total_retrieved += len(progress.retrieved_evidence_ids)
+            pending_evidence += len(progress.pending_evidence_systems)
+            if progress.resolution_status == "pending_issuer_review":
+                pending_issuer += 1
+            if not self._case_arrived(case):
+                continue
             steps_until_deadline = case.deadline_step - self._state.step_count
             if progress.resolution_status == "open":
                 open_cases += 1
@@ -728,6 +902,9 @@ class ChargebackOpsEnvironment(
             "triage_efficiency": round(triage_efficiency, 4),
             "total_evidence_attached": float(total_attached),
             "total_evidence_retrieved": float(total_retrieved),
+            "pending_issuer_reviews": float(pending_issuer),
+            "pending_evidence_requests": float(pending_evidence),
+            "future_case_count": float(self._future_case_count()),
         }
 
     def _selected_case_info(self) -> dict[str, object]:
@@ -751,12 +928,15 @@ class ChargebackOpsEnvironment(
             ),
             "attached_evidence_count": len(progress.attached_evidence_ids),
             "retrieved_evidence_count": len(progress.retrieved_evidence_ids),
+            "pending_evidence_systems": sorted(progress.pending_evidence_systems),
+            "pending_issuer_review": progress.resolution_status
+            == "pending_issuer_review",
             "steps_until_deadline": case.deadline_step - self._state.step_count,
         }
 
     def _build_queue(self) -> list[CaseQueueItem]:
         queue = []
-        for case in self._task.cases:
+        for case in self._visible_task_cases():
             progress = self._progress_by_case[case.case_id]
             display = self._case_display_metadata(case)
             queue.append(
@@ -861,11 +1041,19 @@ class ChargebackOpsEnvironment(
         if self._done:
             return []
         base = ["select_case"]
+        open_visible = [
+            case
+            for case in self._visible_task_cases()
+            if self._progress_by_case[case.case_id].resolution_status == "open"
+        ]
+        has_pending_or_future = (
+            self._pending_work_count() > 0 or self._future_case_count() > 0
+        )
         if self._selected_case_id is None:
-            return base
+            return base if open_visible else ["wait_for_updates"]
         case_progress = self._progress_by_case[self._selected_case_id]
         if case_progress.resolution_status != "open":
-            return ["select_case"]
+            return base if open_visible else ["wait_for_updates"]
         if case_progress.round_number == 2:
             # Pre-arbitration: investigation actions still help (e.g. to pull
             # compelling evidence from a system) but the round-1 submit path
@@ -879,7 +1067,7 @@ class ChargebackOpsEnvironment(
                 "escalate_to_arbitration",
                 "accept_arbitration_loss",
             ]
-        return base + [
+        actions = base + [
             "inspect_case",
             "query_system",
             "retrieve_policy",
@@ -889,6 +1077,9 @@ class ChargebackOpsEnvironment(
             "submit_representment",
             "resolve_case",
         ]
+        if has_pending_or_future and not open_visible:
+            actions.append("wait_for_updates")
+        return actions
 
     def _estimated_progress_score(self) -> float:
         report = grade_episode(

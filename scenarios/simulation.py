@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 SystemName = Literal["orders", "payment", "shipping", "support", "refunds", "risk"]
@@ -55,6 +55,11 @@ class InternalCase:
     # Lower values dampen evidence_strength_score so harder cases land in the
     # ambiguity band and exercise the multi-round dispute path.
     dispute_complexity: float = 1.0
+    # Long-horizon backlog controls. Defaults keep existing tasks immediate.
+    arrival_step: int = 0
+    issuer_response_delay_steps: int = 0
+    evidence_response_delay_steps: int = 0
+    delayed_systems: tuple[SystemName, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -97,6 +102,10 @@ class CaseProgress:
     arbitration_outcome: str | None = None
     arb_fees_paid: float = 0.0
     final_economic_outcome: float | None = None
+    pending_issuer_round_number: int | None = None
+    pending_issuer_due_step: int | None = None
+    merchant_submitted_at_step: int | None = None
+    pending_evidence_systems: dict[SystemName, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -760,6 +769,243 @@ TASKS: dict[str, TaskScenario] = {
 }
 
 
+def _rewrite_case_ids(case: InternalCase, new_case_id: str) -> InternalCase:
+    """Clone a hand-authored case with case-local evidence ids.
+
+    The long-horizon marathon deliberately reuses proven case blueprints, but
+    every cloned case needs unique evidence ids so the observation stream does
+    not look like repeated rows from the same dispute.
+    """
+
+    id_map: dict[str, str] = {}
+    rewritten_systems: dict[SystemName, tuple[InternalEvidence, ...]] = {}
+    for system_name, items in case.evidence_by_system.items():
+        rewritten_items: list[InternalEvidence] = []
+        for item in items:
+            new_evidence_id = f"{new_case_id}-{item.evidence_id}"
+            id_map[item.evidence_id] = new_evidence_id
+            rewritten_items.append(replace(item, evidence_id=new_evidence_id))
+        rewritten_systems[system_name] = tuple(rewritten_items)
+
+    return replace(
+        case,
+        case_id=new_case_id,
+        order_id=f"ORD-LH-{new_case_id[-2:]}",
+        customer_id=f"CUST-LH-{new_case_id[-2:]}",
+        evidence_by_system=rewritten_systems,
+        required_evidence_ids=tuple(id_map[eid] for eid in case.required_evidence_ids),
+        helpful_evidence_ids=tuple(id_map[eid] for eid in case.helpful_evidence_ids),
+        harmful_evidence_ids=tuple(id_map[eid] for eid in case.harmful_evidence_ids),
+    )
+
+
+def _marathon_case(
+    base: InternalCase,
+    *,
+    case_id: str,
+    amount: float,
+    arrival_step: int,
+    deadline_step: int,
+    weight: float,
+    issuer_delay: int = 0,
+    evidence_delay: int = 0,
+    delayed_systems: tuple[SystemName, ...] = (),
+    dispute_complexity: float | None = None,
+    summary_prefix: str = "",
+) -> InternalCase:
+    cloned = _rewrite_case_ids(base, case_id)
+    return replace(
+        cloned,
+        amount=amount,
+        summary=f"{summary_prefix}{cloned.summary}" if summary_prefix else cloned.summary,
+        deadline_step=deadline_step,
+        weight=weight,
+        arrival_step=arrival_step,
+        issuer_response_delay_steps=issuer_delay,
+        evidence_response_delay_steps=evidence_delay,
+        delayed_systems=delayed_systems,
+        dispute_complexity=(
+            dispute_complexity
+            if dispute_complexity is not None
+            else cloned.dispute_complexity
+        ),
+    )
+
+
+def _build_monthly_dispute_backlog_marathon() -> TaskScenario:
+    """Theme #2 flagship: delayed, wave-based dispute backlog.
+
+    This remains the same ChargebackOps domain, but makes planning genuinely
+    long-horizon: cases arrive in waves, some evidence systems are asynchronous,
+    and issuer reviews return several steps after submission. A local greedy
+    policy can solve individual cases but loses portfolio value if it forgets
+    pending work or ignores future deadlines.
+    """
+
+    easy_delivery = TASKS["goods_not_received_easy"].cases[0]
+    fraud_strong = TASKS["fraud_signal_ambiguity"].cases[0]
+    pre_arb = TASKS["pre_arb_recovery_medium"].cases[0]
+    hard_delivery, weak_fraud, refund_due = TASKS["queue_optimization_hard"].cases
+
+    return TaskScenario(
+        task_id="monthly_dispute_backlog_marathon",
+        title="Monthly Dispute Backlog Marathon",
+        difficulty="nightmare",
+        objective=(
+            "Manage a 60-step month-end chargeback backlog with wave arrivals, "
+            "delayed evidence, delayed issuer responses, and arbitration ROI."
+        ),
+        description=(
+            "A professional long-horizon backlog: twelve disputes arrive across "
+            "the episode. The agent must remember pending issuer reviews, revisit "
+            "delayed evidence, triage urgent refunds, contest positive-EV cases, "
+            "and avoid spending $250 arbitration fees on weak packets."
+        ),
+        max_steps=60,
+        cases=(
+            _marathon_case(
+                refund_due,
+                case_id="CB-L01",
+                amount=320.0,
+                arrival_step=0,
+                deadline_step=6,
+                weight=1.2,
+                summary_prefix="[Wave 1 urgent refund] ",
+            ),
+            _marathon_case(
+                easy_delivery,
+                case_id="CB-L02",
+                amount=430.0,
+                arrival_step=0,
+                deadline_step=20,
+                weight=1.1,
+                issuer_delay=3,
+                delayed_systems=("shipping",),
+                evidence_delay=2,
+                dispute_complexity=0.78,
+                summary_prefix="[Wave 1 delayed carrier file] ",
+            ),
+            _marathon_case(
+                fraud_strong,
+                case_id="CB-L03",
+                amount=880.0,
+                arrival_step=0,
+                deadline_step=24,
+                weight=1.6,
+                issuer_delay=4,
+                delayed_systems=("risk",),
+                evidence_delay=2,
+                dispute_complexity=0.70,
+                summary_prefix="[Wave 1 high-value CNP] ",
+            ),
+            _marathon_case(
+                weak_fraud,
+                case_id="CB-L04",
+                amount=240.0,
+                arrival_step=0,
+                deadline_step=14,
+                weight=0.8,
+                summary_prefix="[Wave 1 weak fraud] ",
+            ),
+            _marathon_case(
+                pre_arb,
+                case_id="CB-L05",
+                amount=700.0,
+                arrival_step=8,
+                deadline_step=34,
+                weight=1.4,
+                issuer_delay=3,
+                delayed_systems=("support",),
+                evidence_delay=2,
+                dispute_complexity=0.68,
+                summary_prefix="[Wave 2 pre-arb recovery] ",
+            ),
+            _marathon_case(
+                hard_delivery,
+                case_id="CB-L06",
+                amount=1200.0,
+                arrival_step=10,
+                deadline_step=40,
+                weight=1.9,
+                issuer_delay=5,
+                delayed_systems=("shipping", "support"),
+                evidence_delay=2,
+                dispute_complexity=0.62,
+                summary_prefix="[Wave 2 enterprise furniture] ",
+            ),
+            _marathon_case(
+                refund_due,
+                case_id="CB-L07",
+                amount=180.0,
+                arrival_step=15,
+                deadline_step=25,
+                weight=0.9,
+                summary_prefix="[Wave 2 small refund SLA] ",
+            ),
+            _marathon_case(
+                fraud_strong,
+                case_id="CB-L08",
+                amount=980.0,
+                arrival_step=18,
+                deadline_step=45,
+                weight=1.7,
+                issuer_delay=4,
+                delayed_systems=("support", "risk"),
+                evidence_delay=3,
+                dispute_complexity=0.65,
+                summary_prefix="[Wave 3 returning-customer CNP] ",
+            ),
+            _marathon_case(
+                weak_fraud,
+                case_id="CB-L09",
+                amount=310.0,
+                arrival_step=25,
+                deadline_step=38,
+                weight=0.8,
+                summary_prefix="[Wave 3 weak guest checkout] ",
+            ),
+            _marathon_case(
+                easy_delivery,
+                case_id="CB-L10",
+                amount=560.0,
+                arrival_step=30,
+                deadline_step=55,
+                weight=1.2,
+                issuer_delay=3,
+                delayed_systems=("shipping",),
+                evidence_delay=2,
+                dispute_complexity=0.74,
+                summary_prefix="[Wave 4 delivery proof] ",
+            ),
+            _marathon_case(
+                pre_arb,
+                case_id="CB-L11",
+                amount=750.0,
+                arrival_step=35,
+                deadline_step=58,
+                weight=1.5,
+                issuer_delay=3,
+                delayed_systems=("support",),
+                evidence_delay=2,
+                dispute_complexity=0.66,
+                summary_prefix="[Wave 4 support acknowledgement] ",
+            ),
+            _marathon_case(
+                refund_due,
+                case_id="CB-L12",
+                amount=90.0,
+                arrival_step=42,
+                deadline_step=52,
+                weight=0.6,
+                summary_prefix="[Wave 5 low-value refund] ",
+            ),
+        ),
+    )
+
+
+TASKS["monthly_dispute_backlog_marathon"] = _build_monthly_dispute_backlog_marathon()
+
+
 def get_task(task_id: str) -> TaskScenario:
     """Look up a built-in task or generate one from a ``generated_*`` id."""
 
@@ -846,6 +1092,7 @@ def list_tasks() -> list[TaskScenario]:
             "fraud_signal_ambiguity",
             "pre_arb_recovery_medium",
             "queue_optimization_hard",
+            "monthly_dispute_backlog_marathon",
         ]
     ]
 

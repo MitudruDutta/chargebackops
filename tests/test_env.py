@@ -162,6 +162,75 @@ def test_generated_task_runs_in_environment():
     assert "episode_metrics" in obs.info
 
 
+def test_marathon_task_has_wave_arrivals_and_wait_action():
+    env = ChargebackOpsEnvironment()
+    obs = env.reset(task_id="monthly_dispute_backlog_marathon")
+    assert obs.task_id == "monthly_dispute_backlog_marathon"
+    assert obs.steps_remaining == 60
+    assert len(obs.queue) == 4
+    assert obs.info["episode_metrics"]["future_case_count"] == 8.0
+
+    # Resolve the urgent refund cases that are initially visible enough to
+    # leave the environment waiting on future arrivals or async work later.
+    assert "wait_for_updates" not in obs.available_actions
+
+
+def test_marathon_delayed_evidence_and_issuer_review():
+    env = ChargebackOpsEnvironment()
+    obs = env.reset(task_id="monthly_dispute_backlog_marathon")
+
+    obs = env.step(ChargebackOpsAction(action_type="select_case", case_id="CB-L02"))
+    obs = env.step(
+        ChargebackOpsAction(
+            action_type="query_system", case_id="CB-L02", system_name="orders"
+        )
+    )
+    obs = env.step(
+        ChargebackOpsAction(
+            action_type="query_system", case_id="CB-L02", system_name="shipping"
+        )
+    )
+    assert "delayed shipping evidence" in obs.last_action_result.lower()
+    assert obs.info["pending_evidence_systems"] == ["shipping"]
+
+    obs = env.step(ChargebackOpsAction(action_type="wait_for_updates"))
+    obs = env.step(ChargebackOpsAction(action_type="wait_for_updates"))
+    assert "Delayed shipping evidence arrived" in obs.last_action_result
+    assert obs.visible_case is not None
+    retrieved_ids = {item.evidence_id for item in obs.visible_case.retrieved_evidence}
+    assert any(eid.endswith("E1-DELIVERY-SCAN") for eid in retrieved_ids)
+
+    delivery_ids = sorted(
+        eid
+        for eid in retrieved_ids
+        if eid.endswith("E1-ORDER-CONF") or eid.endswith("E1-DELIVERY-SCAN")
+    )
+    obs = env.step(
+        ChargebackOpsAction(
+            action_type="add_evidence",
+            case_id="CB-L02",
+            evidence_ids=delivery_ids,
+        )
+    )
+    obs = env.step(
+        ChargebackOpsAction(
+            action_type="set_strategy", case_id="CB-L02", strategy="contest"
+        )
+    )
+    obs = env.step(
+        ChargebackOpsAction(action_type="submit_representment", case_id="CB-L02")
+    )
+    assert obs.visible_case is not None
+    assert obs.visible_case.status == "pending_issuer_review"
+    assert obs.info["episode_metrics"]["pending_issuer_reviews"] == 1.0
+
+    obs = env.step(ChargebackOpsAction(action_type="wait_for_updates"))
+    obs = env.step(ChargebackOpsAction(action_type="wait_for_updates"))
+    obs = env.step(ChargebackOpsAction(action_type="wait_for_updates"))
+    assert "Issuer" in obs.last_action_result
+    assert obs.info["episode_metrics"]["pending_issuer_reviews"] == 0.0
+
+
 def test_generated_task_covers_all_reason_codes():
     """Generator should produce all 6 reason code families across seeds."""
     seen_codes: set[str] = set()

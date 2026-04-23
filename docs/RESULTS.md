@@ -1,11 +1,11 @@
 # ChargebackOps — Benchmark Results
 
-Reference numbers for the 11-task headline catalog (4 showcase + 7 seeded
+Reference numbers for the 12-task headline catalog (5 showcase + 7 seeded
 holdout) and the 28-task multi-seed stress grid against the current
 multi-round adversarial environment. Reproduce with the commands at the
 bottom; scores match to within ±1e-3 (float rounding).
 
-Captured on **2026-04-20** on `main` with the 8-dimension case rubric
+Captured on **2026-04-22** on `main` with the 8-dimension case rubric
 (weights `(0.20, 0.15, 0.10, 0.10, 0.10, 0.10, 0.05, 0.20)`,
 `escalation_roi` dimension active) and the deterministic Issuer agent
 (LLM softening disabled — benchmarks stay fully offline). The
@@ -16,40 +16,40 @@ hold with the flag set if no API key is configured.
 
 ## TL;DR
 
-| Policy | Headline avg (11 tasks) | Multi-seed avg (28 tasks) | Provider calls |
+| Policy | Headline avg (12 tasks) | Multi-seed avg (28 tasks) | Provider calls |
 | --- | --- | --- | --- |
 | **naive** (empty packet → submit) | **0.0000** | **0.0000** | 0 |
-| **concede_all** (always `accept_chargeback`) | **0.4475** | **0.4454** | 0 |
-| **escalate_all** (contest, then always escalate) | **0.7713** | **0.7532** | 0 |
-| **heuristic** (EV-rational rule-based pick) | **0.8254** | **0.7628** | 0 |
+| **concede_all** (always `accept_chargeback`) | **0.4435** | **0.4454** | 0 |
+| **escalate_all** (contest, then always escalate) | **0.7668** | **0.7675** | 0 |
+| **heuristic** (EV-rational rule-based pick) | **0.8132** | **0.7628** | 0 |
 
-**Discrimination delta** (heuristic − naive) is **0.8254** on the headline
+**Discrimination delta** (heuristic − naive) is **0.8132** on the headline
 catalog and **0.7628** on the multi-seed grid — well above the 0.40 target.
 
-The heuristic now beats `escalate_all` by **+0.054** on the headline
-catalog because `pre_arb_recovery_medium` deliberately spreads the two
-policies apart: heuristic 0.965, escalate_all 0.613, concede_all 0.223.
-Outside that case the merchant's round-1 packet is strong enough that
-the pre-arb branch never fires and the two scripted policies produce
-identical trajectories — that match on the other tasks is a signal, not
-a bug. `concede_all` collapses to 0.45 because `EscalationROIRubric`
-zeros out concedes on positive-EV contestable cases (`amount > $250`).
+The headline catalog now includes `monthly_dispute_backlog_marathon`, a
+12-case / 60-step task with wave arrivals, delayed evidence, and delayed
+Issuer reviews. It scores lower than the short tasks for every scripted
+policy: heuristic 0.679, escalate_all 0.617, concede_all 0.400, naive
+0.000. This is intentional: the task is the Theme #2 long-horizon stress
+case, while the rest of the catalog keeps the original professional
+chargeback mechanics.
 
 ## Score Curve by Difficulty (multi-seed grid, 7 seeds / difficulty)
 
 | Difficulty | n | heuristic | escalate_all | concede_all | naive |
 | --- | --- | --- | --- | --- | --- |
-| easy | 7 | 0.887 | 0.866 | 0.270 | 0.000 |
+| easy | 7 | 0.887 | 0.924 | 0.270 | 0.000 |
 | medium | 7 | 0.869 | 0.869 | 0.630 | 0.000 |
 | hard | 7 | 0.755 | 0.737 | 0.491 | 0.000 |
 | nightmare | 7 | 0.540 | 0.540 | 0.390 | 0.000 |
 
 Observations:
-- Heuristic score decreases monotonically with difficulty
+- Heuristic score decreases monotonically with generated difficulty
   (0.89 → 0.87 → 0.76 → 0.54). The difficulty gradient is real.
-- Heuristic edges out `escalate_all` on easy (+0.021) and hard (+0.018)
-  because the EV-rational policy catches the rare positive-EV pre-arb
-  branch where blanket escalation overspends $250 in arb fees.
+- `escalate_all` beats heuristic on generated easy tasks because those
+  generated cases are small and often reward aggressive clean-packet
+  escalation. The fixed marathon and pre-arb showcase are what separate
+  the EV-rational policy from blanket escalation in the headline catalog.
 - `concede_all` collapses on easy (0.270) — small-amount easy cases
   are positive-EV contestable, so the EscalationROI rubric zeros out
   concedes. The gap narrows at nightmare (0.540 vs 0.390) because the
@@ -59,7 +59,7 @@ Observations:
   packet-validity gate and every case is scored as unresolved /
   abandoned.
 
-## Headline Per-Task Table (11 tasks, offline)
+## Headline Per-Task Table (12 tasks, offline)
 
 | Task ID | Difficulty | heuristic | escalate_all | concede_all | naive |
 | --- | --- | --- | --- | --- | --- |
@@ -67,30 +67,36 @@ Observations:
 | fraud_signal_ambiguity | easy | 0.958 | 0.958 | 0.223 | 0.000 |
 | pre_arb_recovery_medium | medium | 0.965 | 0.613 | 0.223 | 0.000 |
 | queue_optimization_hard | hard | 0.926 | 0.926 | 0.554 | 0.000 |
-| generated_easy_s42 | easy | 0.843 | 0.643 | 0.333 | 0.000 |
+| monthly_dispute_backlog_marathon | nightmare | 0.679 | 0.617 | 0.400 | 0.000 |
+| generated_easy_s42 | easy | 0.843 | 0.743 | 0.333 | 0.000 |
 | generated_medium_s17 | medium | 0.856 | 0.856 | 0.542 | 0.000 |
 | generated_medium_s99 | medium | 0.758 | 0.758 | 0.620 | 0.000 |
 | generated_hard_s7 | hard | 0.904 | 0.861 | 0.615 | 0.000 |
 | generated_hard_s53 | hard | 0.662 | 0.662 | 0.483 | 0.000 |
 | generated_nightmare_s31 | nightmare | 0.536 | 0.536 | 0.424 | 0.000 |
 | generated_nightmare_s77 | nightmare | 0.708 | 0.708 | 0.484 | 0.000 |
-| **Average** | | **0.8254** | **0.7713** | **0.4475** | **0.0000** |
+| **Average** | | **0.8132** | **0.7668** | **0.4435** | **0.0000** |
 
 (Per-task numbers from `runners.benchmark_runner.run_policy_sweep()`.)
-The three rows where heuristic > escalate_all (`pre_arb_recovery_medium`,
-`generated_easy_s42`, `generated_hard_s7`) are the cases where the
-issuer's round-1 rejection plus a negative-EV pre-arb branch would have
-made blanket escalation strictly worse. On the other 8 rows the issuer
-accepts in round 1 and the two policies produce identical trajectories.
+The rows where heuristic > escalate_all (`pre_arb_recovery_medium`,
+`monthly_dispute_backlog_marathon`, and `generated_hard_s7`) are the
+cases where the issuer's round-1 rejection, delayed work, or negative-EV
+pre-arb branch makes blanket escalation strictly worse.
 
-## Training Curve (GRPO, 200 steps) — first-attempt findings
+## Training Curve (GRPO, 200 steps) — legacy first-attempt findings
+
+This section documents the first failed GRPO attempt on the pre-marathon
+catalog. It is useful as a failure analysis, not as the current learning
+claim. The current notebook has been rewritten to use SFT + GRPO on
+`Qwen/Qwen2.5-1.5B-Instruct`; rerun it before making any public claim
+about trained-agent improvement.
 
 First end-to-end GRPO run executed **2026-04-20** on a Colab T4 with
 `Qwen/Qwen3.5-0.8B`, batch 4 × K=4 generations, 200 steps,
 `max_completion_length=128`, `beta=0.0`, `gradient_checkpointing=True`.
 Wall time ~52 min, peak VRAM 7.1 GB.
 
-| Step | Mean score (headline 11) | Notes |
+| Step | Mean score (legacy headline 11) | Notes |
 | --- | --- | --- |
 | 0   | 0.8234 | untrained Qwen3.5-0.8B |
 | 50  | 0.8234 | GRPO checkpoint |
@@ -146,7 +152,7 @@ notebook is re-run with the parser + chat-template fixes.)
 
 ## Ablation
 
-| Agent | Mean score (headline 11) | Notes |
+| Agent | Mean score (legacy headline 11) | Notes |
 | --- | --- | --- |
 | **naive** (empty packet → submit) | **0.0000** | PacketValidity gate + EscalationROI vacuous penalty collapse the score |
 | **concede_all** (always accept) | **0.4475** | Cheap, but EscalationROIRubric (20%) zeros out concedes on positive-EV contestable cases |
@@ -201,7 +207,7 @@ python - <<'PY'
 from runners.benchmark_runner import run_policy_sweep, run_multi_seed
 
 headline = run_policy_sweep()
-print("HEADLINE (10 tasks)")
+print("HEADLINE (12 tasks)")
 for s in headline.policies:
     print(f"  {s.policy:14s}  mean={s.mean_score:.4f}  stdev={s.stdev:.4f}")
 print(f"  delta (heuristic - naive): {headline.discrimination_delta}")
@@ -228,7 +234,7 @@ python -m runners.baseline_runner | tee /tmp/baseline_run.json
 - Python 3.12, pytest 8.x
 - `openenv-core`, `pydantic`, `openai` per `pyproject.toml`
 - No provider calls for the four scripted policies — all results fully offline
-- Full test suite: **86/86 passing** (env, grader, issuer, arbitration, escalation_roi, llm_softening, llm_note_judge, training_curve)
+- Full test suite: **107/107 passing** (env, grader, issuer, arbitration, escalation_roi, llm_softening, llm_note_judge, training adapters, marathon mechanics)
 
 ## What This Table Does Not Show
 

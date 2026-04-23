@@ -10,13 +10,15 @@ pinned: false
 
 # ChargebackOps
 
-An OpenEnv environment that simulates merchant-side chargeback dispute operations as a **multi-round adversarial game** against a scripted Issuer agent.
+An OpenEnv environment that simulates merchant-side chargeback dispute operations as a **long-horizon professional workflow** with delayed evidence, wave-based case arrivals, and multi-round adversarial review by a scripted Issuer agent.
 
 Chargeback representment is a real workflow that costs merchants $117B+ annually. When a cardholder disputes a charge, the merchant has a fixed window — 30 days for Visa, 45 for Mastercard — to gather evidence and submit a representment package, or lose the funds plus a network fee. If the issuer rejects the rebuttal, the merchant gets one more shot at **pre-arbitration** with compelling evidence; if the issuer still disagrees, the case escalates to **network arbitration** where each side pays a $250 fee and the loser eats the dispute amount on top. Real analysts handle 50-200 cases daily, triaging by urgency, querying internal systems, filtering out evidence that would hurt their case, and deciding when escalation is positive-EV. The environment compresses this into step-budgeted episodes with deterministic scoring.
 
 Each case carries real card network metadata: Visa reason code 13.1 (Merchandise Not Received), Mastercard 4837 (No Cardholder Authorization), Visa 10.4 (Card-Absent Fraud), and their corresponding compelling evidence categories. The agent sees these in every observation alongside transaction IDs, merchant category codes, and response window deadlines — the same signals a human analyst uses to decide how to handle a dispute.
 
-The HF Space exposes a live demo at `/demo` with step-by-step episode playback, round-by-round Issuer decisions with rationale quotes, and final arbitration P&L.
+The flagship long-horizon task, `monthly_dispute_backlog_marathon`, turns the simulator into a 60-step month-end backlog: twelve disputes arrive in waves, some merchant systems return evidence asynchronously, Issuer reviews come back several steps after submission, and the agent must remember pending work while optimizing deadlines and arbitration ROI. This keeps Theme #3.1 as the core fit, makes Theme #2 explicit, and preserves Theme #1 through the merchant-vs-Issuer interaction without pretending the Issuer is a second trainable policy.
+
+The HF Space exposes a live demo at `/demo` with step-by-step episode playback, round-by-round Issuer decisions with rationale quotes, pending-update metrics, and final arbitration P&L.
 
 ## Architecture
 
@@ -30,6 +32,7 @@ graph TB
     subgraph Core["Environment Core"]
         ENV["ChargebackOpsEnvironment\nstep() / reset() / state()"]
         SIM["Simulation Engine\nscenarios/simulation.py"]
+        EVT["Long-Horizon Event Queue\nwave arrivals + delayed evidence + delayed issuer reviews"]
         ISSUER["IssuerAgent\nscenarios/issuer_model.py\naccept / request / escalate"]
         ARB["Arbitration Resolver\nscenarios/arbitration.py\nP(win)·amount vs $250 fee"]
         GRD["OpenEnv Rubric Grader\nevaluation/rubrics.py\n8 dimensions, WeightedSum + Gate"]
@@ -37,6 +40,7 @@ graph TB
 
     subgraph Tasks["Task Sources"]
         FIXED["4 handcrafted scenarios"]
+        MARATHON["1 long-horizon backlog marathon\n12 cases / 60 steps / delayed updates"]
         GEN["Parametric generator\nseeded RNG, infinite tasks"]
         ISO["ISO 20022 adapter\n300 real chargeback records"]
         STRIPE["Stripe sandbox connector"]
@@ -45,13 +49,27 @@ graph TB
     INF --> ENV
     BL --> ENV
     ENV --> SIM
+    ENV --> EVT
     ENV --> ISSUER
     ENV --> ARB
     ENV --> GRD
     SIM --> FIXED
+    SIM --> MARATHON
     SIM --> GEN
     SIM --> ISO
     SIM --> STRIPE
+```
+
+### Long-Horizon Backlog Workflow
+
+```mermaid
+flowchart TB
+    W1["Wave 1: initial disputes"] --> TRIAGE["Triage by deadline, amount, and contestability"]
+    TRIAGE --> ASYNC["Async work starts\ncarrier files, risk records, issuer reviews"]
+    ASYNC --> W2["Later waves arrive\nnew urgent refunds + high-value contests"]
+    W2 --> MEMORY["Agent tracks pending reviews\ndelayed evidence + future deadlines"]
+    MEMORY --> PREARB["Issuer pushback\npre-arb / arbitration decisions"]
+    PREARB --> PORTFOLIO["Final portfolio score\nrecovery, deadlines, evidence quality, ROI"]
 ```
 
 ### Multi-Round Dispute Lifecycle
@@ -118,38 +136,40 @@ pie title Case Score Weights
 
 ## Benchmark Results
 
-11-task headline catalog (4 showcase + 7 seeded holdout) and a 28-task multi-seed grid against
+12-task headline catalog (5 showcase + 7 seeded holdout) and a 28-task multi-seed grid against
 the multi-round adversarial environment. Full reproducible numbers in
 [`docs/RESULTS.md`](docs/RESULTS.md).
 
 | Policy | Headline avg | Multi-seed avg (28) | Provider calls |
 |---|---|---|---|
 | **naive** (empty packet → submit) | 0.000 | 0.000 | 0 |
-| **concede_all** (always `accept_chargeback`) | 0.567 | 0.563 | 0 |
-| **escalate_all** (contest, then always escalate) | **0.773** | 0.765 | 0 |
-| **heuristic** (EV-rational, fully offline) | **0.773** | **0.765** | 0 |
+| **concede_all** (always `accept_chargeback`) | 0.4435 | 0.4454 | 0 |
+| **escalate_all** (contest, then always escalate) | 0.7668 | 0.7675 | 0 |
+| **heuristic** (EV-rational, fully offline) | **0.8132** | 0.7628 | 0 |
 
-**Discrimination delta** (heuristic − naive) is **+0.773** on the headline catalog —
-well above the 0.40 hackathon target. `escalate_all` ties with `heuristic` because the heuristic
-wins the representment on most tasks at round 1, so the pre-arb branch never fires and the two
-policies produce identical trajectories. That match is a signal, not a bug: when the merchant
-packet is strong, escalation is never EV-rational.
+**Discrimination delta** (heuristic − naive) is **+0.8132** on the headline catalog —
+well above the 0.40 hackathon target. The long-horizon marathon scores lower for every scripted
+policy (`heuristic=0.6793`, `escalate_all=0.6168`, `concede_all=0.4004`, `naive=0.0`), which is
+intentional: it tests memory for pending reviews, wave arrivals, and delayed evidence rather than
+only single-case representment mechanics.
 
 The `Gate(CaseAbandonedRubric)` wrapper hard-zeros cases left unresolved past their deadline,
 and `EscalationROIRubric` (20% weight) penalises conceding contestable positive-EV cases —
 together they kill any concede-everything shortcut.
 
-## Action Space (12 typed actions)
+## Action Space (13 typed actions)
 
 **Round 1 — Representment:** `select_case` · `inspect_case` · `query_system` · `retrieve_policy` · `add_evidence` · `remove_evidence` · `set_strategy` · `submit_representment` · `resolve_case`
 
 **Round 2/3 — Pre-arb & Arbitration:** `respond_to_pre_arb` (attach compelling evidence) · `escalate_to_arbitration` (pay $250 to push to network ruling) · `accept_arbitration_loss`
 
+**Long-horizon backlog:** `wait_for_updates` (advance when all visible work is blocked on delayed evidence, issuer review, or future arrivals)
+
 6 merchant systems: orders, payment, shipping, support, refunds, risk.
 
 ## Task Sources
 
-- **Built-in** (4): hand-crafted showcase scenarios including the `pre_arb_recovery_medium` round-2 trigger
+- **Built-in** (5): four hand-crafted showcase scenarios plus `monthly_dispute_backlog_marathon`, a 12-case / 60-step Theme #2 task
 - **Parametric generator**: seeded RNG across 6 reason codes, 4 difficulty tiers including adversarial evidence at hard/nightmare. Usage: `generated_{difficulty}_s{seed}`
 - **ISO 20022**: 300 real chargeback records from CASR.003 format
 - **Stripe sandbox**: live API or synthetic Stripe-format disputes
@@ -221,10 +241,10 @@ Entry point: [`inference.py`](inference.py). Fallback chain: primary provider ->
 ## Limitations and Future Work
 
 - **Simplified compelling-evidence rules.** Network-specific compelling evidence categories (Visa CE 3.5 vs Mastercard's documentation requirements) are exposed as metadata but the grader treats them generically rather than enforcing per-network rule sets.
-- **No partial observability.** All 6 merchant systems are always available. In practice, systems go down, data is delayed, and evidence quality varies. System degradation would add a realistic stochastic element.
+- **Bounded partial observability.** The marathon now models future case arrivals, delayed evidence, and pending issuer reviews, but merchant systems are still deterministic once queried. Stochastic outages would be a stronger production simulation.
 - **Deterministic Issuer.** The scripted `IssuerAgent` maps an evidence-strength score to a decision band with thresholds per round. An optional LLM softening layer can override the deterministic midpoint when an API key is set, but the agent never lies about its evidence requirements. A reactive learned opponent is the natural next step.
 - **Currency and jurisdiction.** All cases are USD. Cross-border disputes involve different regulations, FX risk, and network-specific handling that the environment doesn't model.
-- **`escalate_all` ties heuristic.** When the merchant packet is strong, escalation never fires. Adding cases where the Issuer is more aggressive at round 1 would create separation between these two policies.
+- **Issuer is scripted, not learned.** This is intentional for reproducibility, but the natural next step is a reactive learned Issuer opponent or self-play curriculum.
 
 ## Project Layout
 
@@ -238,7 +258,7 @@ Entry point: [`inference.py`](inference.py). Fallback chain: primary provider ->
 ├── scenarios/                # Tasks, generator, ISO adapter
 ├── server/                   # FastAPI app, environment, Gradio demo
 ├── connectors/               # Stripe sandbox connector
-├── tests/                    # 79 tests (env, grader, API, issuer, arbitration, escalation_roi)
+├── tests/                    # 107 tests (env, grader, API, issuer, arbitration, escalation_roi, training)
 ├── Dockerfile
 └── pyproject.toml
 ```

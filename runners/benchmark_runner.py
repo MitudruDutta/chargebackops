@@ -84,6 +84,8 @@ def concede_all_policy(observation: dict[str, Any]) -> ChargebackOpsAction | Non
     if visible_case is None:
         open_cases = [item for item in queue if item["status"] == "open"]
         if not open_cases:
+            if "wait_for_updates" in available:
+                return ChargebackOpsAction(action_type="wait_for_updates")
             return None
         target = sorted(
             open_cases,
@@ -101,6 +103,8 @@ def concede_all_policy(observation: dict[str, Any]) -> ChargebackOpsAction | Non
             if item["status"] == "open" and item["case_id"] != case_id
         ]
         if not open_cases:
+            if "wait_for_updates" in available:
+                return ChargebackOpsAction(action_type="wait_for_updates")
             return None
         target = sorted(
             open_cases,
@@ -144,6 +148,8 @@ def naive_policy(observation: dict[str, Any]) -> ChargebackOpsAction | None:
     if visible_case is None:
         open_cases = [item for item in queue if item["status"] == "open"]
         if not open_cases:
+            if "wait_for_updates" in available:
+                return ChargebackOpsAction(action_type="wait_for_updates")
             return None
         return ChargebackOpsAction(
             action_type="select_case", case_id=open_cases[0]["case_id"]
@@ -157,6 +163,8 @@ def naive_policy(observation: dict[str, Any]) -> ChargebackOpsAction | None:
             if item["status"] == "open" and item["case_id"] != case_id
         ]
         if not open_cases:
+            if "wait_for_updates" in available:
+                return ChargebackOpsAction(action_type="wait_for_updates")
             return None
         return ChargebackOpsAction(
             action_type="select_case", case_id=open_cases[0]["case_id"]

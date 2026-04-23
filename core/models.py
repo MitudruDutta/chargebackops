@@ -23,6 +23,8 @@ ActionType = Literal[
     "respond_to_pre_arb",
     "escalate_to_arbitration",
     "accept_arbitration_loss",
+    # long-horizon backlog action
+    "wait_for_updates",
 ]
 
 

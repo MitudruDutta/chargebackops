@@ -168,11 +168,17 @@ class DeadlineComplianceRubric(Rubric):
 
         if final == "unresolved":
             return 0.0
-        resolution_step = (
-            progress.resolved_at_step
-            if progress.resolved_at_step is not None
-            else ctx.step_count
-        )
+        if final == "contest" and progress.merchant_submitted_at_step is not None:
+            # Long-horizon tasks can delay issuer decisions by several steps.
+            # Deadline compliance is based on the merchant's submission time,
+            # not when the issuer eventually responds.
+            resolution_step = progress.merchant_submitted_at_step
+        else:
+            resolution_step = (
+                progress.resolved_at_step
+                if progress.resolved_at_step is not None
+                else ctx.step_count
+            )
         if resolution_step > case.deadline_step:
             return 0.0
         return 1.0
@@ -203,6 +209,12 @@ class CaseAbandonedRubric(Rubric):
         progress = ctx.progress
         case = ctx.case
         if _final_resolution(progress) != "unresolved":
+            return 1.0
+        if (
+            progress.resolution_status == "pending_issuer_review"
+            and progress.merchant_submitted_at_step is not None
+            and progress.merchant_submitted_at_step <= case.deadline_step
+        ):
             return 1.0
         if ctx.step_count > case.deadline_step:
             return 0.0

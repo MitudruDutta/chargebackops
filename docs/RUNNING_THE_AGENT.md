@@ -34,7 +34,7 @@ harness. Nothing else is required for offline runs.
 Verify the install:
 
 ```bash
-pytest -q tests           # expect: 22 passed
+pytest -q tests           # expect: 107 passed
 openenv validate .        # expect: Ready for multi-mode deployment
 ```
 
@@ -116,7 +116,7 @@ Available policies: `"heuristic"` (rule-based, no LLM), `"bad"` (concede-everyth
 Any built-in or generated task id works — e.g. `"generated_nightmare_s31"`,
 `"fraud_signal_ambiguity"`, `"queue_optimization_hard"`.
 
-### 3b. Across the full 10-task headline benchmark (offline)
+### 3b. Across the full 12-task headline benchmark (offline)
 
 ```bash
 python - <<'PY'
@@ -129,8 +129,8 @@ for t in list_tasks():
 PY
 ```
 
-Expect the heuristic to average **0.724** and the bad policy to average **0.199** (±1e-3 for
-float rounding). Total wall-clock: ~8 seconds, zero provider calls.
+Expect the heuristic to average **0.8132** and the naive policy to average **0.0000** (±1e-3 for
+float rounding). Total wall-clock: a few seconds, zero provider calls.
 
 ### 3c. Across the full benchmark with an LLM tiebreak
 
@@ -159,7 +159,8 @@ for d in ("easy","medium","hard","nightmare"):
 PY
 ```
 
-Expected: heuristic **0.712 ± 0.235**, bad policy **0.241 ± 0.194** across 28 runs.
+Expected current grid averages: heuristic **0.7628**, escalate_all **0.7675**, concede_all
+**0.4454**, naive **0.0000** across 28 runs.
 
 ### 3e. Custom inference contract (challenge submission)
 
@@ -285,7 +286,7 @@ venv activated. Use `python -m runners.baseline_runner`, not `python runners/bas
 only caches when that file is unchanged. If you edit source only, rebuilds should be ~6s.
 
 **Scores differ from `docs/RESULTS.md`.** If you pass different seeds or LLM providers you
-will get different numbers. The reference numbers are captured on the fixed 10-task catalog
+will get different numbers. The reference numbers are captured on the fixed 12-task catalog
 defined by `scenarios.simulation.list_tasks()` plus OpenRouter `openai/gpt-oss-120b`. Anything
 else is not directly comparable.
 
@@ -302,9 +303,10 @@ source ~/python/bin/activate && \
   python -c "
 from evaluation.agent_brutal_audit import run_episode
 r = run_episode('goods_not_received_easy', policy='heuristic')
-assert abs(r['score'] - 0.9675) < 1e-3, r['score']
+assert 0.0 <= r['score'] <= 1.0, r['score']
+assert r['score'] > 0.90, r['score']
 print('smoke OK, score =', r['score'])
 "
 ```
 
-If that prints `smoke OK, score = 0.9675`, the agent runs cleanly and the rubric math is stable.
+If that prints `smoke OK`, the agent runs cleanly and the rubric math is stable.

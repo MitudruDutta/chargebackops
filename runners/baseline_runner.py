@@ -276,6 +276,15 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
     open_cases = [case for case in queue if case["status"] == "open"]
     candidates: list[CandidateAction] = []
 
+    if not open_cases and "wait_for_updates" in observation.get("available_actions", []):
+        candidates.append(
+            CandidateAction(
+                action=ChargebackOpsAction(action_type="wait_for_updates"),
+                summary="Wait for delayed issuer reviews, delayed evidence, or future case arrivals.",
+            )
+        )
+        return candidates
+
     # Step cost estimates per reason code (select_case + full workflow).
     _FAST_REASON_CODES = {
         "goods_not_received",
@@ -356,6 +365,13 @@ def candidate_actions(observation: dict[str, Any]) -> list[CandidateAction]:
                         f"Switch to open case {case['case_id']} (deadline in {case['steps_until_deadline']} steps, "
                         f"amount ${case['amount']})."
                     ),
+                )
+            )
+        if not candidates and "wait_for_updates" in observation.get("available_actions", []):
+            candidates.append(
+                CandidateAction(
+                    action=ChargebackOpsAction(action_type="wait_for_updates"),
+                    summary="Wait because selected case is blocked and no open case is currently available.",
                 )
             )
         return candidates
