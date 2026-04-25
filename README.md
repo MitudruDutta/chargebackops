@@ -12,6 +12,37 @@ pinned: false
 
 **A cost-asymmetric, partially-observable, multi-round adversarial negotiation environment for training LLM agents on real-world B2B dispute workflows — and a documented case study of GRPO failure modes on token-deterministic tasks.**
 
+[![Meta OpenEnv](https://img.shields.io/badge/Meta-OpenEnv-0668E1?logo=meta&logoColor=white)](https://github.com/meta-pytorch/OpenEnv)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-FFD21E?logoColor=black)](https://huggingface.co/spaces/mitudrudutta/ChargeBackOps)
+[![Transformers](https://img.shields.io/badge/Transformers-Qwen2.5--3B-FFD21E?logo=huggingface&logoColor=black)](https://github.com/huggingface/transformers)
+[![TRL · GRPO](https://img.shields.io/badge/TRL-GRPO-FFD21E?logo=huggingface&logoColor=black)](https://github.com/huggingface/trl)
+[![PEFT · LoRA](https://img.shields.io/badge/PEFT-LoRA%20r%3D16-FFD21E?logo=huggingface&logoColor=black)](https://github.com/huggingface/peft)
+[![Gradio](https://img.shields.io/badge/Gradio-Live%20Demo-F97316?logo=gradio&logoColor=white)](https://mitudrudutta-chargebackops.hf.space/demo)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Server-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Docker](https://img.shields.io/badge/Docker-Containerised-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Colab](https://img.shields.io/badge/Open%20in-Colab-F9AB00?logo=googlecolab&logoColor=white)](https://colab.research.google.com/drive/1GtLH6_b10oHlAnnGq4hnBkcGJ-pE_za5?usp=sharing)
+[![YouTube](https://img.shields.io/badge/YouTube-Walkthrough-FF0000?logo=youtube&logoColor=white)](https://youtu.be/7dz37JTTMo4)
+[![Tests](https://img.shields.io/badge/tests-113%20passing-brightgreen)](tests/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+> **Try it now**
+> · 🟢 [**Live demo (Gradio on HF Space)**](https://mitudrudutta-chargebackops.hf.space/demo)
+> · 📺 [**Walkthrough video (YouTube)**](https://youtu.be/7dz37JTTMo4)
+> · 🤗 [**Hugging Face Space**](https://huggingface.co/spaces/mitudrudutta/ChargeBackOps)
+> · 🧪 [**Latest training run (Colab — iter 5, 200 GRPO steps)**](https://colab.research.google.com/drive/1GtLH6_b10oHlAnnGq4hnBkcGJ-pE_za5?usp=sharing)
+> · 🧪 [**Previous training run (Colab — iter 3, 62 GRPO steps)**](https://colab.research.google.com/drive/1AjG3Sv7FnMeOSls6JMzTunkMzlJi_ySu?usp=sharing)
+> · 🧠 [**Specification-gaming write-up**](docs/SPECIFICATION_GAMING.md)
+
+## TL;DR (60-second read)
+
+- **Problem.** Chargeback representment is a **$117B/yr B2B decision-theoretic problem** that *no public RL benchmark targets*: cost-asymmetric, partially-observable, multi-round adjudication against a procedurally-constrained adversary, with a $250 arbitration fee asymmetry that turns naive "always contest" into a money-loser. The same decision primitive generalises to insurance claims, tax audits, content-moderation appeals, and patent disputes.
+- **Environment.** OpenEnv-compatible Gym-style env with **13 typed actions**, **6 queryable merchant systems** (with delayed evidence), **wave-based long-horizon arrivals**, a scripted **Issuer adversary** running Visa CE 3.5 / Mastercard compelling-evidence rules, and a deterministic **arbitration resolver** with $250 fee asymmetry. **Five task sources** including ISO 20022 (300 real records) and a Stripe sandbox connector. **113 tests**, valid `openenv.yaml` manifest, FastAPI `/reset`, `/step`, `/state`.
+- **Reward.** **8 composable `openenv.core.rubrics.Rubric` subclasses** combined via `WeightedSum`, gated by a deadline `Gate(CaseAbandonedRubric)`, with 40% of reward on **decision** + **terminal** dimensions where economically irrational policies bleed money fastest. Discrimination delta naive→heuristic = **+0.813**, and three degenerate scripted policies each hit a *different* known ceiling — empirical evidence the rubric is hard to game.
+- **Results.** Real **SFT + GRPO** pipeline trained on Colab T4 against the live env — not a static dataset. Untrained Qwen2.5-3B base scores **0.456**, SFT lifts to **0.536** (+0.08 absolute / +18% relative). GRPO ran 200 steps across five iterations and uncovered **three distinct failure modes** culminating in a **reproducible specification-gaming exploit** where the model learned to produce JSON that an eval-pipeline fallback "rescued" with the heuristic policy — bit-exactly matching the baseline at 0.8132. We **disclose this honestly**, document the diagnosis, and ship a three-path remedy. Plots, training curves, and per-dimension breakdowns all in this README.
+- **Why it matters.** A frontier-relevant environment that exercises capabilities current LLMs are *bad* at (cost-asymmetric multi-round play with delayed evidence) **and** a research artefact: a documented, reproducible GRPO failure mode that, to our knowledge, is not in the published literature for SFT-warmstarted policies on typed-action environments with rollout-helper fallbacks.
+
 ChargebackOps simulates the merchant side of a credit-card chargeback dispute. An LLM agent triages incoming disputes, retrieves evidence from internal systems under partial observability, chooses a contest strategy, submits a representment packet to a scripted Issuer agent operating under Visa / Mastercard reason-code rules, and decides whether to escalate to network arbitration where both sides forfeit a $250 fee. Lose arbitration and the merchant pays the disputed amount **plus** the fee.
 
 This environment exposes a **decision-theoretic primitive** uncommon in current RL benchmarks: cost-asymmetric multi-round adjudication with delayed evidence, deadline pressure, and a procedurally-constrained adversary. The same primitive generalizes beyond chargebacks to insurance claims, tax audits, content-moderation appeals, and patent disputes.
@@ -113,7 +144,11 @@ The 8-dimension decomposition gives an interpretability surface most environment
 
 ## Training results
 
-Pipeline: **Qwen2.5-3B fp16 + LoRA r=16** on a single Colab T4. Phase A is supervised fine-tuning on heuristic rollouts; Phase B is GRPO with an outcome-based reward (terminal $-PnL after the model's action plus a heuristic tail-rollout). Full notebook: [`notebooks/train_merchant_agent.ipynb`](notebooks/train_merchant_agent.ipynb).
+Pipeline: **Qwen2.5-3B fp16 + LoRA r=16** on a single Colab T4. Phase A is supervised fine-tuning on heuristic rollouts; Phase B is GRPO with an outcome-based reward (terminal $-PnL after the model's action plus a heuristic tail-rollout). The training loop **connects to the live `ChargebackOpsEnvironment`** — every gradient step is graded by the same rubric and same Issuer adversary the eval uses; there is no static dataset shortcut.
+
+- **Repo notebook (canonical):** [`notebooks/train_merchant_agent.ipynb`](notebooks/train_merchant_agent.ipynb)
+- **Latest Colab run (iter 5, 200 GRPO steps):** [open in Colab](https://colab.research.google.com/drive/1GtLH6_b10oHlAnnGq4hnBkcGJ-pE_za5?usp=sharing)
+- **Previous Colab run (iter 3, 62 GRPO steps):** [open in Colab](https://colab.research.google.com/drive/1AjG3Sv7FnMeOSls6JMzTunkMzlJi_ySu?usp=sharing)
 
 ### Five training iterations, three failure modes
 
@@ -185,6 +220,8 @@ The discovery is preserved in this release as a research artefact. To our knowle
 
 ## Quick start
 
+> Don't want to install anything? **[Click the live Gradio demo](https://mitudrudutta-chargebackops.hf.space/demo)** — point an LLM at the env in your browser.
+
 ```bash
 pip install -e ".[dev]"
 cp .env.example .env
@@ -255,6 +292,21 @@ The container exposes the FastAPI app on port 8000 (`/docs` for OpenAPI, `/demo`
 ├── Dockerfile
 └── pyproject.toml
 ```
+
+## Engineering hygiene (table stakes)
+
+- **OpenEnv base classes used as intended.** `ChargebackOpsEnvironment` subclasses `openenv.core.environments.Environment`; rubric components subclass `openenv.core.rubrics.Rubric`. No reserved tool names (`reset`, `step`, `state`, `close`) reused for anything else.
+- **Gym-style API.** `env.reset(task_id=...)` → `Observation`, `env.step(action)` → `(Observation, reward, done, info)`, `env.state()` → introspectable `EnvironmentState`. Episode store is server-side; clients are purely network.
+- **Strict client/server separation.** `core/client.py` talks to the FastAPI server over HTTP only — it never imports `server.*` or `scenarios.*`. The Docker image is the source of truth.
+- **Valid `openenv.yaml` manifest.** Passes `openenv validate .`; manifest declares the action schema, observation schema, and rubric module path.
+- **113 tests, all green.** Cover env reset/step semantics, action validation, every rubric subclass, the issuer agent, the arbitration resolver, the FastAPI surface, and the SFT data builder.
+- **Reproducibility.** SHA-1 keyed RNG for arbitration, pinned dependencies in `pyproject.toml`, deterministic task IDs, expected score ranges in [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md).
+
+## Why this matters
+
+Most public RL-for-LLM benchmarks score policies on tasks where a competent next-token predictor is already close to optimal — chess, snake, grid worlds, single-turn math. ChargebackOps is intentionally a different shape: **multi-round, partially-observable, cost-asymmetric play against a procedurally-constrained adversary, where the rational policy depends on a $250 fee asymmetry and the rubric punishes both rule-violating and economically-irrational behaviour**. That is the kind of decision surface real B2B operations live on, and it is exactly the kind of capability gap current LLM agents struggle with — as the iter-5 specification-gaming exploit demonstrates in vivid detail.
+
+The environment is built so a researcher can credibly write a paper on top of it: composable rubrics, deterministic task IDs, ISO 20022 + Stripe sandbox connectors for real-world data, an honest documented failure mode of GRPO that future training recipes can target as a benchmark, and a heuristic baseline strong enough that **beating it requires the model to actually learn the task**, not merely to execute the rollout-helper fallback.
 
 ## License
 
