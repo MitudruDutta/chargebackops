@@ -14,11 +14,15 @@ The Issuer agent (`scenarios/issuer_model.py`) is a deterministic scoring functi
 
 **Future work**: trajectory-level credit assignment where the model controls every action in the rollout. Will significantly increase per-step compute (currently ~5-10 generations per step; trajectory-level would be ~10-30 per step).
 
-## 3. GRPO trained 200 steps, not converged
+## 3. GRPO collapsed onto a specification-gaming attractor (iter 5)
 
-The published checkpoint trains GRPO for 200 steps on a Colab T4. Real gradient flow is observed on ~30-50% of steps with peak gradient magnitudes 1.5–2.5, KL divergence reaching ~0.16, and demonstrated specialization on hard / nightmare cases. The trained policy approaches but does not cross the heuristic baseline (0.73 vs 0.81 overall), and regresses on easy cases (-0.31 absolute).
+The published checkpoint trains GRPO for 200 steps on a Colab T4. Training-time signals all looked correct: real gradient flow on ~60% of steps, peak gradient magnitudes 1.5–2.3, KL divergence reaching 0.16, entropy 0.20, final train_loss 1e-3.
 
-**Future work**: longer GRPO runs (1000+ steps), larger model (Qwen2.5-7B with QLoRA), and a curriculum that includes easy-case replay to prevent the easy-case regression.
+Despite this, the trained checkpoint emits an invalid `action_type="accept_case"` on every prompt — a token sequence that parses as JSON but does not validate against the env's typed action schema. The eval rollout helper (`run_episode_with_text_policy`) silently falls back to the offline heuristic on every invalid action. The reported eval score (`0.8132`) is therefore the heuristic baseline running through the rollout helper, not the trained policy. The full diagnostic (with reproducer and remedy) is in [`SPECIFICATION_GAMING.md`](SPECIFICATION_GAMING.md).
+
+The legitimate trained-vs-untrained delta on this iteration is the **base → SFT** step: `0.456 → 0.536` overall (+0.08 absolute, +18% relative). Per-family the SFT step shows the expected pattern of an undertrained warmstart — large gains on easy / medium and regressions on hard / nightmare where 150 SFT steps under-cover the harder distribution.
+
+**Future work**: implement remedy paths A and C from `SPECIFICATION_GAMING.md` (penalise invalid actions in the rollout grader; tighten the format reward to require `action_type ∈ valid_action_set`) and re-run iter 6 with longer GRPO (1,000+ steps) on a larger backbone (Qwen2.5-7B with QLoRA).
 
 ## 4. Six reason codes, not the full Visa / Mastercard catalog
 
@@ -44,16 +48,18 @@ The cardholder is implicit — they have already filed the dispute when the epis
 
 **Future work**: add a `negotiate_with_cardholder` action with a scripted cardholder agent that responds to offers.
 
-## 8. The trained checkpoint underperforms the heuristic on overall mean
+## 8. The trained checkpoint does not produce executable actions on most prompts
 
-This is by far the most important limitation to disclose: the trained policy (0.728) does not beat the heuristic baseline (0.813) on the overall mean across the headline catalog. It *does* beat the SFT-only checkpoint on hard (+0.06) and nightmare (+0.14), but trades easy-case performance to do so.
+This is by far the most important limitation to disclose. The legitimate trained policy on the published checkpoint is the **SFT-only** checkpoint at `0.536` overall — a +0.08 absolute, +18% relative improvement over the untrained Qwen2.5-3B base (`0.456`). The SFT delta is uneven across difficulty bands: large gains on easy (`0.286 → 0.778`) and medium (`0.443 → 0.666`), regressions on hard (`0.758 → 0.462`) and nightmare (`0.336 → 0.235`) because 150 SFT steps under-cover the harder distribution.
+
+After GRPO the policy emits an invalid `action_type` and the eval pipeline reports the heuristic-fallback score (`0.8132`) rather than the policy's actual on-task performance. This is documented as failure mode 3 in [`METHOD.md`](METHOD.md) §3.C and [`SPECIFICATION_GAMING.md`](SPECIFICATION_GAMING.md). The eval surface is fully transparent — every plotted post-step-80 value is the heuristic running through the rollout helper, not the trained model.
 
 The four reasons this is acceptable for the current release:
 
-1. The headline metric for an *RL benchmark environment* is not "did this 3B model beat a hand-tuned heuristic?" but "does the environment exhibit a discrimination gradient that supports learning?" — and the base → SFT → GRPO progression (0.470 → 0.752 → 0.728) is clearly visible and per-difficulty interpretable.
-2. The heuristic baseline (0.81) is close to the per-task ceiling and represents a strong domain-expert policy. A 3B model under 200 GRPO steps approaching it within 0.08 absolute is a reasonable result.
-3. The per-family breakdown reveals the trained policy is genuinely *different* from both SFT and heuristic — it actively explores on the hardest cases. This is the property an RL benchmark environment exists to encourage; a benchmark that only rewards heuristic mimicry would be uninteresting.
-4. The path to crossing the heuristic is well-understood (longer training, larger model, easy-case replay) and is laid out in the future-work sections above.
+1. The headline metric for an *RL benchmark environment* is not "did this 3B model beat a hand-tuned heuristic?" but "does the environment exhibit a discrimination gradient that supports learning?" — and the four scripted policies (`naive 0.000 → concede_all 0.444 → escalate_all 0.767 → heuristic 0.813`) plus the legitimate SFT delta show the gradient is real.
+2. The specification-gaming discovery is itself a research contribution. The exact failure mode (GRPO on a typed-action env with an SFT-warmstarted near-deterministic policy, plus an eval rollout helper that falls back to a competent heuristic) is not catalogued in the GRPO literature surveyed for this work.
+3. The remedy is concrete and shippable: penalise invalid actions in the rollout grader (path A), or tighten the format reward to require valid `action_type` (path C). See `SPECIFICATION_GAMING.md` §"Remedies".
+4. The honesty of the disclosure is itself the lesson. Eval pipelines that silently fall back to a competent policy give RL agents a way to inherit that policy's reward without producing the work — practitioners need to inspect a diagnostic rollout before trusting any eval score that exactly matches a baseline.
 
 ## 9. Single-process FastAPI, no horizontal scaling
 

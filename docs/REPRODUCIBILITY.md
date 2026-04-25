@@ -128,15 +128,18 @@ HOLDOUT_SEEDS_BY_DIFF = {
 
 Holdout seeds are excluded from training and used as the eval set.
 
-Expected per-checkpoint scores (with ±0.03 absolute variance from sampling stochasticity in GRPO):
+Expected per-checkpoint scores (with ±0.03 absolute variance from sampling stochasticity):
 
-| Checkpoint | overall | easy | medium | hard | nightmare |
-|---|---|---|---|---|---|
-| Untrained base | 0.47 ± 0.02 | 0.29 ± 0.05 | 0.44 ± 0.04 | 0.77 ± 0.03 | 0.38 ± 0.05 |
-| SFT | 0.75 ± 0.02 | 0.92 ± 0.04 | 0.79 ± 0.03 | 0.75 ± 0.04 | 0.55 ± 0.05 |
-| GRPO | 0.73 ± 0.04 | 0.61 ± 0.08 | 0.79 ± 0.04 | 0.82 ± 0.05 | 0.69 ± 0.06 |
+| Checkpoint | overall | easy | medium | hard | nightmare | Status |
+|---|---|---|---|---|---|---|
+| Untrained Qwen2.5-3B base (step 0) | 0.46 ± 0.02 | 0.29 ± 0.05 | 0.44 ± 0.04 | 0.76 ± 0.03 | 0.34 ± 0.05 | Real |
+| SFT (step 1, 150 steps) | 0.54 ± 0.03 | 0.78 ± 0.05 | 0.67 ± 0.04 | 0.46 ± 0.05 | 0.24 ± 0.06 | **Real, headline trained checkpoint** |
+| GRPO step 80 | 0.80 ± 0.04 | 0.93 ± 0.04 | 0.79 ± 0.04 | 0.83 ± 0.05 | 0.65 ± 0.06 | Mixed: partial real + early gaming attractor |
+| GRPO step 160+ | 0.8132 ± 0.0001 | 0.92 | 0.86 | 0.83 | 0.64 | Gaming-dominated (matches heuristic bit-exactly) |
 
-GRPO numbers have wider variance because the trainer's sampling is stochastic and only 30-50% of steps see a non-zero gradient (see [`METHOD.md`](METHOD.md) §3 for why).
+The `0.8132 ± 0.0001` precision on GRPO step 160+ is not reproducibility precision — it is the eval rollout helper falling back to the deterministic heuristic on every invalid action. The heuristic produces `0.8132` exactly because both the heuristic and the arbitration adjudicator are deterministic given (case, packet). See [`SPECIFICATION_GAMING.md`](SPECIFICATION_GAMING.md) for the full diagnostic.
+
+GRPO numbers in earlier rows (step 0 / step 1 / step 80) have wider variance because the trainer's sampling is stochastic and only 30–60% of steps see a non-zero gradient (see [`METHOD.md`](METHOD.md) §3 for why).
 
 ## 6. Reproducing the figures
 

@@ -34,7 +34,7 @@ harness. Nothing else is required for offline runs.
 Verify the install:
 
 ```bash
-pytest -q tests           # expect: 107 passed
+pytest -q tests           # expect: 113 passed
 openenv validate .        # expect: Ready for multi-mode deployment
 ```
 

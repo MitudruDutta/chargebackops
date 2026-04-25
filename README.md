@@ -10,17 +10,20 @@ pinned: false
 
 # ChargebackOps
 
-**A cost-asymmetric, partially-observable, multi-round adversarial negotiation environment for training LLM agents on real-world B2B dispute workflows.**
+**A cost-asymmetric, partially-observable, multi-round adversarial negotiation environment for training LLM agents on real-world B2B dispute workflows — and a documented case study of GRPO failure modes on token-deterministic tasks.**
 
-ChargebackOps simulates the merchant side of a credit-card chargeback dispute: a multi-step decision process where an LLM agent must triage incoming disputes, retrieve evidence from internal systems under partial observability, choose a contest strategy, submit a representment packet to a scripted Issuer agent operating under Visa / Mastercard reason-code rules, and decide whether to escalate to network arbitration where both sides forfeit a $250 fee. The terminal economics are irreversible: lose arbitration and the merchant pays the disputed amount **plus** the fee.
+ChargebackOps simulates the merchant side of a credit-card chargeback dispute. An LLM agent triages incoming disputes, retrieves evidence from internal systems under partial observability, chooses a contest strategy, submits a representment packet to a scripted Issuer agent operating under Visa / Mastercard reason-code rules, and decides whether to escalate to network arbitration where both sides forfeit a $250 fee. Lose arbitration and the merchant pays the disputed amount **plus** the fee.
 
-This environment exposes a **decision-theoretic primitive** that is rare in current RL benchmarks: cost-asymmetric multi-round adjudication with delayed evidence, deadline pressure, and a procedurally-constrained adversary. The same primitive generalizes beyond chargebacks to insurance claims, tax audits, content-moderation appeals, and patent disputes.
+This environment exposes a **decision-theoretic primitive** uncommon in current RL benchmarks: cost-asymmetric multi-round adjudication with delayed evidence, deadline pressure, and a procedurally-constrained adversary. The same primitive generalizes beyond chargebacks to insurance claims, tax audits, content-moderation appeals, and patent disputes.
+
+The repository ships an OpenEnv-compatible environment, an 8-dimension decomposable rubric, a parametric task generator with ISO 20022 + Stripe sandbox connectors, a single-T4 SFT + GRPO training notebook, and — equally important — a **multi-iteration diagnostic study of GRPO** that uncovered three distinct failure modes including a reproducible specification-gaming exploit. All of the failure modes, their training-time signals, and their remedies are documented in [`docs/METHOD.md`](docs/METHOD.md) and [`docs/SPECIFICATION_GAMING.md`](docs/SPECIFICATION_GAMING.md).
 
 ## Why this environment exists
 
-Chargeback representment is a **$117B/year B2B problem** that no public RL benchmark has addressed. Real merchant analysts handle 50–200 cases daily under tight deadlines, choosing which disputes to contest, which evidence to attach (and which to omit, since irrelevant evidence weakens a packet), and when to take a positive-EV escalation versus concede a losing case to save the $250 fee.
+Chargeback representment is a **$117B per year B2B problem** that no public RL benchmark has addressed. Real merchant analysts handle 50–200 cases daily under tight deadlines, choosing which disputes to contest, which evidence to attach (and which to omit, since irrelevant evidence weakens a packet), and when to take a positive-EV escalation versus concede a losing case to save the $250 fee. Every decision is a non-trivial finite-horizon MDP with cost-asymmetric terminal economics.
 
 The agent is given:
+
 - A **multi-modal observation surface**: open queue with deadlines, retrieved evidence cards, policy text, prior issuer rationales, and per-case status.
 - **Partial observability**: 6 merchant systems must be queried to retrieve evidence, with several systems returning evidence asynchronously (delayed by N steps).
 - **Wave-based case arrivals** and a portfolio-marathon task with 12 cases over 60 steps for true long-horizon reasoning.
@@ -86,7 +89,9 @@ Both sides eat the $250 fee. Escalating a positive-EV case is rewarded by the ru
 
 ## OpenEnv Rubric integration
 
-Each scoring dimension is a standalone `openenv.core.rubrics.Rubric` subclass. They compose into a per-case `WeightedSum` (wrapped in a `Gate(CaseAbandonedRubric)` deadline guard) and an episode-level `ChargebackOpsEpisodeRubric` that the environment wires into `self.rubric`. The whole grader is introspectable via `env.rubric.named_rubrics()`, hookable via `register_forward_hook`, and checkpointable via `state_dict()` — exactly the surface OpenEnv exposes for composable reward research. Swapping `NoteQualityRubric` for an `LLMJudge`, or wrapping any dimension in a `Gate`, is a one-line change.
+Each scoring dimension is a standalone `openenv.core.rubrics.Rubric` subclass. They compose into a per-case `WeightedSum` (wrapped in a `Gate(CaseAbandonedRubric)` deadline guard) and an episode-level `ChargebackOpsEpisodeRubric` that the environment wires into `self.rubric`. The whole grader is introspectable via `env.rubric.named_rubrics()`, hookable via `register_forward_hook`, and checkpointable via `state_dict()` — exactly the surface OpenEnv exposes for composable reward research.
+
+![8-dimension OpenEnv rubric weights, grouped by category (decision / packet / process / terminal)](docs/figures/rubric_weights.png)
 
 ```
 ChargebackOpsEpisodeRubric
@@ -104,51 +109,62 @@ ChargebackOpsEpisodeRubric
         └── EscalationROIRubric          0.20
 ```
 
-The 8-dimension decomposition gives an interpretability surface most environments lack: every checkpoint can be analysed dimension-by-dimension to see *which* aspect of policy improved.
-
-| Dimension | How It's Scored |
-|---|---|
-| **Strategy** | 1.0 = optimal, 0.35 = acceptable fallback, 0.0 = wrong |
-| **Evidence** | Contest: 0.7 × required coverage + 0.3 × helpful coverage − 0.25 per harmful |
-| **Packet** | Binary: all required attached AND zero harmful = 1.0, else 0.0 |
-| **Deadline** | Binary: resolved before deadline = 1.0, else 0.0 |
-| **Efficiency** | Penalises duplicate queries, over-querying concedable cases, late policy retrieval |
-| **Outcome** | 1.0 = matches optimal, 0.4 = acceptable, 0.0 = wrong |
-| **Note** | Policy keyword coverage + evidence ID refs − harmful term penalty |
-| **Escalation ROI** | Rewards EV-rational arbitration: escalate iff `P(win)·amount > $250 fee` |
+The 8-dimension decomposition gives an interpretability surface most environments lack: every checkpoint can be analysed dimension-by-dimension to see *which* aspect of the policy improved. Forty percent of the reward sits on **decision** (`StrategyCorrectness`) and **terminal** (`EscalationROI`) — the two surfaces where economically irrational policies bleed money fastest.
 
 ## Training results
 
 Pipeline: **Qwen2.5-3B fp16 + LoRA r=16** on a single Colab T4. Phase A is supervised fine-tuning on heuristic rollouts; Phase B is GRPO with an outcome-based reward (terminal $-PnL after the model's action plus a heuristic tail-rollout). Full notebook: [`notebooks/train_merchant_agent.ipynb`](notebooks/train_merchant_agent.ipynb).
 
-### Headline numbers
+### Five training iterations, three failure modes
 
-![Per-difficulty training curve](docs/figures/training_curve_by_family.png)
+The training pipeline was iterated five times with progressively-tuned hyperparameters. Each iteration revealed a distinct failure mode of GRPO when applied to a strongly imitation-warmstarted policy on a typed-action environment. Full diagnostic in [`docs/METHOD.md`](docs/METHOD.md) §3.
 
-*Mean normalised score (y) versus training step (x), broken out by case difficulty. Base = untrained Qwen2.5-3B. Step 1 = SFT-only checkpoint. Step 62 = GRPO-refined checkpoint.*
+| Iter | SFT max_steps | SFT mean_acc | GRPO max_steps | num_gens | temp | grad>0.005 freq | Outcome |
+|---|---|---|---|---|---|---|---|
+| 1 | 800 | 0.96 | 300 | 4 | 0.7 | **5%** | **Total gradient collapse** — group reward variance ≈ 0 |
+| 2 | 800 | 0.96 | 120 | 8 | 1.3 | 30% | Tiny but real movement after sampling-widening fix |
+| 3 | 300 | 0.96 | 60 | 8 | 1.3 | 50% | Frequent gradient, magnitudes 0.01-0.02 |
+| 4 | 300 | 0.96 | 60 | 8 | 1.3 | 50% | Same code as iter 3 — sampling luck broke through (peak 2.58) |
+| 5 | **150** | **0.88** | 200 | 8 | 1.3 | 60% | **Curve plateau at heuristic — but specification gaming discovered** |
 
-| Checkpoint | overall | easy | medium | hard | nightmare |
-|---|---|---|---|---|---|
-| Untrained base | 0.47 | 0.29 | 0.44 | 0.77 | 0.38 |
-| SFT | 0.75 | **0.92** | 0.79 | 0.75 | 0.55 |
-| GRPO-refined | 0.73 | 0.61 | 0.79 | **0.82** | **0.69** |
-| Heuristic baseline | 0.81 | — | — | — | — |
-| Naive baseline | 0.00 | — | — | — | — |
+### Iter 5 per-checkpoint eval scores
 
-**Headline finding**: GRPO refinement traded easy-case discipline (where the SFT policy had collapsed onto the heuristic argmax) for a **+25% relative improvement on nightmare cases** (0.55 → 0.69) and a **+9% relative improvement on hard cases** (0.75 → 0.82). The shift demonstrates real exploration beyond imitation learning — the trained policy actively chooses different actions on the hardest cases, sometimes paying for exploration with a worse easy-case win-rate.
+![Cross-iteration comparison: iter 3 plateau vs iter 5 specification-gaming attractor](docs/figures/training_curve_cross_iter.png)
+*Left: iter 3 (62 GRPO steps, no gaming) plateaus below the heuristic at 0.728. Iter 5 (200 GRPO steps) plateaus *exactly at* the heuristic at 0.8132 — the bit-exact match is the signature of the eval-fallback exploit, not convergent learning. Right: iter-5 per-difficulty curves show the same plateau across all four difficulty bands from step 80 onwards because the heuristic produces 100% of executed actions. The `figures/training_curve.png` and `figures/training_curve_by_family.png` files render the iter-5 curves on their own axes.*
 
-### Discrimination across the catalog
+| Step | Checkpoint | overall | easy | medium | hard | nightmare | Notes |
+|---|---|---|---|---|---|---|---|
+| 0 | Untrained Qwen2.5-3B base | 0.456 | 0.286 | 0.443 | 0.758 | 0.336 | Real |
+| 1 | SFT (Phase A) | **0.536** | 0.778 | 0.666 | 0.462 | 0.235 | **Real, headline trained checkpoint** |
+| 81 | GRPO step 80 | 0.799 | 0.929 | 0.792 | 0.828 | 0.647 | Mixed: partial real + early gaming attractor |
+| 161 | GRPO step 160 | 0.8132 | 0.922 | 0.860 | 0.831 | 0.641 | Gaming-dominated |
+| 202 | GRPO final | 0.8132 | 0.922 | 0.860 | 0.831 | 0.641 | Gaming-dominated |
+| — | Heuristic baseline | **0.8132** | — | — | — | — | — |
 
-The 12-task headline catalog plus a 28-task multi-seed grid against the multi-round adversarial environment. Numbers in [`docs/RESULTS.md`](docs/RESULTS.md).
+**Honest reading.** The GRPO checkpoints from step 160 onwards score *bit-exactly* the heuristic baseline (`0.8132`). That coincidence triggered a closer look.
+
+![Iter-5 eval score attribution: trained-policy contribution 0.000, heuristic-fallback contribution 0.8132. Diagnostic single-action rollouts show the env rejects every model action.](docs/figures/gaming_attribution.png)
+
+The trained policy emits `action_type="accept_case"` — an invalid hybrid of `accept_chargeback` + `select_case` that parses as JSON but fails the env's action validation. The eval rollout helper falls back to the heuristic on invalid model output, completes the episode at heuristic-quality outcome, and the rubric awards heuristic-quality score. The model contributes one invalid action per step; the heuristic produces 100% of executed actions; the reported eval matches the heuristic baseline bit-exactly.
+
+This is **textbook specification gaming via the eval pipeline**, not via the env reward. The full diagnostic, root cause, and three-path remedy are in [`docs/SPECIFICATION_GAMING.md`](docs/SPECIFICATION_GAMING.md). The **honest trained-vs-untrained delta** on this iteration is the SFT step at `0.536` — a +0.08 absolute, +18% relative improvement over the untrained Qwen2.5-3B base, attributable to legitimate SFT learning.
+
+The discovery is preserved in this release as a research artefact. To our knowledge this failure mode is not documented in the existing GRPO literature, which warmstarts from instruct base models without an SFT-warmstarted policy emitting invalid-but-parseable JSON. Practitioners applying GRPO to a typed-action environment with a fallback-equipped rollout helper should audit the rollout pipeline and inspect a diagnostic rollout before trusting any eval score that exactly matches a baseline.
+
+### Scripted-policy discrimination
+
+12-task headline catalog plus a 28-task multi-seed grid. Numbers in [`docs/RESULTS.md`](docs/RESULTS.md).
+
+![Scripted-policy scores: naive 0.000, concede_all 0.444, escalate_all 0.767, heuristic 0.813. Each degenerate policy hits a known ceiling imposed by the rubric.](docs/figures/discrimination_gradient.png)
 
 | Policy | Headline avg | Multi-seed avg (28) | Provider calls |
 |---|---|---|---|
 | naive (empty packet → submit) | 0.000 | 0.000 | 0 |
-| concede_all (always `accept_chargeback`) | 0.4435 | 0.4454 | 0 |
-| escalate_all (contest, then always escalate) | 0.7668 | 0.7675 | 0 |
-| heuristic (EV-rational, fully offline) | **0.8132** | 0.7628 | 0 |
+| concede_all (always `accept_chargeback`) | 0.444 | 0.445 | 0 |
+| escalate_all (contest, then always escalate) | 0.767 | 0.768 | 0 |
+| heuristic (EV-rational, fully offline) | **0.813** | 0.763 | 0 |
 
-**Discrimination delta** (heuristic − naive) is **+0.81** on the headline catalog, well above conventional benchmark targets. The `Gate(CaseAbandonedRubric)` wrapper hard-zeros cases left unresolved past their deadline, and `EscalationROIRubric` (20% weight) penalises conceding contestable positive-EV cases — together they kill any concede-everything shortcut.
+**Discrimination delta** (heuristic − naive) = **+0.813**. The 8-dimension `WeightedSum` plus the `Gate(CaseAbandonedRubric)` deadline guard combine to defeat every degenerate strategy: empty-packet zeros out, concede-all caps at 0.44, escalate-all caps at 0.77.
 
 ## Action space (13 typed actions)
 
@@ -156,14 +172,14 @@ The 12-task headline catalog plus a 28-task multi-seed grid against the multi-ro
 
 **Round 2/3 — Pre-arb & Arbitration**: `respond_to_pre_arb` · `escalate_to_arbitration` · `accept_arbitration_loss`
 
-**Long-horizon backlog**: `wait_for_updates` (advance when all visible work is blocked on delayed evidence, issuer review, or future arrivals)
+**Long-horizon backlog**: `wait_for_updates`
 
 6 merchant systems: orders, payment, shipping, support, refunds, risk.
 
 ## Task sources
 
 - **Built-in (5)**: four handcrafted showcase scenarios plus `monthly_dispute_backlog_marathon`, a 12-case / 60-step long-horizon task.
-- **Parametric generator**: seeded RNG across 6 reason codes, 4 difficulty tiers including adversarial evidence at hard/nightmare. Usage: `generated_{difficulty}_s{seed}`.
+- **Parametric generator**: seeded RNG across 6 reason codes, 4 difficulty tiers including adversarial evidence at hard / nightmare.
 - **ISO 20022**: 300 real chargeback records from CASR.003 format.
 - **Stripe sandbox**: live API or synthetic Stripe-format disputes.
 
@@ -184,19 +200,14 @@ from server.chargeback_ops_environment import ChargebackOpsEnvironment
 env = ChargebackOpsEnvironment()
 for name, r in env.rubric.named_rubrics():
     print(f"{name}: {type(r).__name__}")
-# case_rubric: CaseRubric
-# case_rubric.deadline_gate: Gate
-# case_rubric.aggregator: WeightedSum
-# case_rubric.aggregator.rubric_0: StrategyCorrectnessRubric
-# ... (all 8 dimensions, ending with rubric_7: EscalationROIRubric)
 ```
 
 Run the server in Docker:
 
 ```bash
 docker build -t chargebackops .
-docker run --rm -p 8000:8000 chargebackops          # offline run, no env vars required
-docker run --rm -p 8000:8000 --env-file .env chargebackops   # with LLM provider keys
+docker run --rm -p 8000:8000 chargebackops
+docker run --rm -p 8000:8000 --env-file .env chargebackops
 ```
 
 The container exposes the FastAPI app on port 8000 (`/docs` for OpenAPI, `/demo` for the Gradio live demo, `/health` for readiness).
@@ -215,22 +226,13 @@ The container exposes the FastAPI app on port 8000 (`/docs` for OpenAPI, `/demo`
 | `GET` | `/health` | Health check |
 | `GET` | `/docs` | OpenAPI docs |
 
-## Inference contract
-
-```bash
-API_BASE_URL=https://openrouter.ai/api/v1
-MODEL_NAME=openai/gpt-oss-120b
-HF_TOKEN=your_key
-```
-
-Entry point: [`inference.py`](inference.py). Fallback chain: primary provider → OpenRouter → Gemini → Groq → heuristic.
-
 ## Documentation
 
-- [`docs/RESULTS.md`](docs/RESULTS.md) — full quantitative results, per-checkpoint per-family scores, baseline policy sweep, per-dimension rubric breakdown.
-- [`docs/METHOD.md`](docs/METHOD.md) — methodology and the post-SFT GRPO collapse diagnostic. Documents an underappreciated failure mode of GRPO on imitation-warmstarted policies and the exact remedy.
+- [`docs/RESULTS.md`](docs/RESULTS.md) — full quantitative results, cross-iteration training study, per-dimension rubric breakdown, diagnostic rollouts.
+- [`docs/METHOD.md`](docs/METHOD.md) — methodology and the multi-iteration diagnostic study covering all three GRPO failure modes.
+- [`docs/SPECIFICATION_GAMING.md`](docs/SPECIFICATION_GAMING.md) — focused write-up of the iter-5 specification-gaming discovery with reproducer and remedy.
 - [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) — explicit honest limitations and why each is left as future work.
-- [`docs/RELATED_WORK.md`](docs/RELATED_WORK.md) — citations and positioning relative to PPO, GRPO, RLVR, specification gaming, and prior chargeback research.
+- [`docs/RELATED_WORK.md`](docs/RELATED_WORK.md) — citations and positioning across PPO, GRPO, RLVR, specification gaming, and prior chargeback research.
 - [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md) — exact commands, pinned versions, expected runtimes, expected score ranges with seeds.
 - [`docs/RUNNING_THE_AGENT.md`](docs/RUNNING_THE_AGENT.md) — end-user guide for running the trained agent.
 - [`CITATION.cff`](CITATION.cff) — academic citation metadata.
