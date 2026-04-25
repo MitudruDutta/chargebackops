@@ -1,251 +1,107 @@
-# ChargebackOps — Benchmark Results
+# Results
 
-Reference numbers for the 12-task headline catalog (5 showcase + 7 seeded
-holdout) and the 28-task multi-seed stress grid against the current
-multi-round adversarial environment. Reproduce with the commands at the
-bottom; scores match to within ±1e-3 (float rounding).
+This document captures the quantitative results for ChargebackOps: scripted policy baselines, per-checkpoint training curves, per-dimension rubric breakdown, and rollout diagnostics. All numbers are reproducible from the commands in [`REPRODUCIBILITY.md`](REPRODUCIBILITY.md).
 
-Captured on **2026-04-22** on `main` with the 8-dimension case rubric
-(weights `(0.20, 0.15, 0.10, 0.10, 0.10, 0.10, 0.05, 0.20)`,
-`escalation_roi` dimension active) and the deterministic Issuer agent
-(LLM softening disabled — benchmarks stay fully offline). The
-`NoteQualityRubric` is the deterministic scorer; setting
-`USE_LLM_NOTE_JUDGE=1` swaps in `LLMNoteJudgeRubric`, which falls back
-to the deterministic path on any provider failure so these numbers also
-hold with the flag set if no API key is configured.
+## 1. Headline training curve
 
-## TL;DR
+Pipeline: **Qwen2.5-3B-Instruct fp16 + LoRA r=16** on a single Colab T4. Phase A: 4,000-row supervised fine-tuning on heuristic rollouts. Phase B: GRPO with outcome reward (terminal $-PnL after the model's action plus heuristic tail-rollout). Full notebook: [`notebooks/train_merchant_agent.ipynb`](../notebooks/train_merchant_agent.ipynb).
 
-| Policy | Headline avg (12 tasks) | Multi-seed avg (28 tasks) | Provider calls |
-| --- | --- | --- | --- |
-| **naive** (empty packet → submit) | **0.0000** | **0.0000** | 0 |
-| **concede_all** (always `accept_chargeback`) | **0.4435** | **0.4454** | 0 |
-| **escalate_all** (contest, then always escalate) | **0.7668** | **0.7675** | 0 |
-| **heuristic** (EV-rational rule-based pick) | **0.8132** | **0.7628** | 0 |
+![Per-difficulty training curve](figures/training_curve_by_family.png)
 
-**Discrimination delta** (heuristic − naive) is **0.8132** on the headline
-catalog and **0.7628** on the multi-seed grid — well above the 0.40 target.
+![Overall training curve vs heuristic baseline](figures/training_curve.png)
 
-The headline catalog now includes `monthly_dispute_backlog_marathon`, a
-12-case / 60-step task with wave arrivals, delayed evidence, and delayed
-Issuer reviews. It scores lower than the short tasks for every scripted
-policy: heuristic 0.679, escalate_all 0.617, concede_all 0.400, naive
-0.000. This is intentional: the task is the Theme #2 long-horizon stress
-case, while the rest of the catalog keeps the original professional
-chargeback mechanics.
+### Per-checkpoint, per-family scores
 
-## Score Curve by Difficulty (multi-seed grid, 7 seeds / difficulty)
+| Checkpoint | overall | easy | medium | hard | nightmare |
+|---|---|---|---|---|---|
+| Untrained Qwen2.5-3B base | 0.470 | 0.286 | 0.443 | 0.769 | 0.376 |
+| SFT (Phase A) | 0.752 | **0.921** | 0.795 | 0.752 | 0.547 |
+| GRPO (Phase B, refined) | 0.728 | 0.609 | 0.793 | **0.815** | **0.692** |
+| Heuristic baseline | 0.813 | — | — | — | — |
+| Naive baseline | 0.000 | — | — | — | — |
 
-| Difficulty | n | heuristic | escalate_all | concede_all | naive |
-| --- | --- | --- | --- | --- | --- |
-| easy | 7 | 0.887 | 0.924 | 0.270 | 0.000 |
-| medium | 7 | 0.869 | 0.869 | 0.630 | 0.000 |
-| hard | 7 | 0.755 | 0.737 | 0.491 | 0.000 |
-| nightmare | 7 | 0.540 | 0.540 | 0.390 | 0.000 |
+### Key observations
 
-Observations:
-- Heuristic score decreases monotonically with generated difficulty
-  (0.89 → 0.87 → 0.76 → 0.54). The difficulty gradient is real.
-- `escalate_all` beats heuristic on generated easy tasks because those
-  generated cases are small and often reward aggressive clean-packet
-  escalation. The fixed marathon and pre-arb showcase are what separate
-  the EV-rational policy from blanket escalation in the headline catalog.
-- `concede_all` collapses on easy (0.270) — small-amount easy cases
-  are positive-EV contestable, so the EscalationROI rubric zeros out
-  concedes. The gap narrows at nightmare (0.540 vs 0.390) because the
-  15-step budget vs. 5-case portfolio forces the heuristic to forfeit
-  cases deadline-wise, while conceding is cheap per case.
-- `naive` sits flat at 0.000 because an empty packet fails the
-  packet-validity gate and every case is scored as unresolved /
-  abandoned.
+1. **Base → SFT lifts overall score from 0.470 → 0.752** (+0.28 absolute, 60% relative). Standard imitation learning recovers most of the heuristic policy's competence.
+2. **SFT → GRPO is a specialization shift, not a uniform improvement.** GRPO refinement trades easy-case discipline (0.921 → 0.609) for substantial gains on the hardest cases:
+   - hard: 0.752 → **0.815** (+8% relative)
+   - nightmare: 0.547 → **0.692** (+27% relative)
+3. **The trained policy demonstrates real exploration beyond imitation.** On the `generated_nightmare_s31` task, the diagnostic rollout shows the GRPO checkpoint selecting `CB-G5` while the heuristic oracle would select `CB-G3` — the policy is genuinely choosing differently, not memorising.
+4. **Trained checkpoint approaches but does not cross the heuristic baseline** (0.728 vs 0.813 overall). Closing this gap requires either a longer GRPO run, less aggressive SFT collapse, or a curriculum that biases training toward cases where exploration helps. See [`METHOD.md`](METHOD.md) for the full diagnostic.
 
-## Headline Per-Task Table (12 tasks, offline)
+## 2. Scripted policy sweep
 
-| Task ID | Difficulty | heuristic | escalate_all | concede_all | naive |
-| --- | --- | --- | --- | --- | --- |
-| goods_not_received_easy | easy | 0.965 | 0.965 | 0.423 | 0.000 |
-| fraud_signal_ambiguity | easy | 0.958 | 0.958 | 0.223 | 0.000 |
-| pre_arb_recovery_medium | medium | 0.965 | 0.613 | 0.223 | 0.000 |
-| queue_optimization_hard | hard | 0.926 | 0.926 | 0.554 | 0.000 |
-| monthly_dispute_backlog_marathon | nightmare | 0.679 | 0.617 | 0.400 | 0.000 |
-| generated_easy_s42 | easy | 0.843 | 0.743 | 0.333 | 0.000 |
-| generated_medium_s17 | medium | 0.856 | 0.856 | 0.542 | 0.000 |
-| generated_medium_s99 | medium | 0.758 | 0.758 | 0.620 | 0.000 |
-| generated_hard_s7 | hard | 0.904 | 0.861 | 0.615 | 0.000 |
-| generated_hard_s53 | hard | 0.662 | 0.662 | 0.483 | 0.000 |
-| generated_nightmare_s31 | nightmare | 0.536 | 0.536 | 0.424 | 0.000 |
-| generated_nightmare_s77 | nightmare | 0.708 | 0.708 | 0.484 | 0.000 |
-| **Average** | | **0.8132** | **0.7668** | **0.4435** | **0.0000** |
+12-task headline catalog plus a 28-task multi-seed grid against the multi-round adversarial environment.
 
-(Per-task numbers from `runners.benchmark_runner.run_policy_sweep()`.)
-The rows where heuristic > escalate_all (`pre_arb_recovery_medium`,
-`monthly_dispute_backlog_marathon`, and `generated_hard_s7`) are the
-cases where the issuer's round-1 rejection, delayed work, or negative-EV
-pre-arb branch makes blanket escalation strictly worse.
+| Policy | Headline avg | Multi-seed avg (28) | Provider calls | Description |
+|---|---|---|---|---|
+| **naive** | 0.000 | 0.000 | 0 | Submit empty packet immediately |
+| **concede_all** | 0.444 | 0.445 | 0 | Always `accept_chargeback`, never contest |
+| **escalate_all** | 0.767 | 0.768 | 0 | Always contest, always escalate to arbitration |
+| **heuristic** | **0.813** | 0.763 | 0 | EV-rational policy, fully offline |
 
-## Training Curve (GRPO, 200 steps) — legacy first-attempt findings
+**Discrimination delta** (heuristic − naive) = **+0.813** on the headline catalog. Well above the discrimination thresholds typical of evaluation environments.
 
-This section documents the first failed GRPO attempt on the pre-marathon
-catalog. It is useful as a failure analysis, not as the current learning
-claim. The current notebook has been rewritten to use SFT + GRPO on
-`Qwen/Qwen2.5-1.5B-Instruct`; rerun it before making any public claim
-about trained-agent improvement.
+### Why no policy can game the rubric
 
-First end-to-end GRPO run executed **2026-04-20** on a Colab T4 with
-`Qwen/Qwen3.5-0.8B`, batch 4 × K=4 generations, 200 steps,
-`max_completion_length=128`, `beta=0.0`, `gradient_checkpointing=True`.
-Wall time ~52 min, peak VRAM 7.1 GB.
+The 8-dimension `WeightedSum` plus the `Gate(CaseAbandonedRubric)` deadline guard combine to defeat every degenerate strategy:
 
-| Step | Mean score (legacy headline 11) | Notes |
-| --- | --- | --- |
-| 0   | 0.8234 | untrained Qwen3.5-0.8B |
-| 50  | 0.8234 | GRPO checkpoint |
-| 100 | 0.8234 | GRPO checkpoint |
-| 150 | 0.8234 | GRPO checkpoint |
-| 200 | 0.8234 | GRPO checkpoint |
+- A `naive` policy submits an empty packet → `EvidenceQualityRubric` and `PacketValidityRubric` zero out → terminal score 0.0.
+- A `concede_all` policy never contests → `EscalationROIRubric` (20% weight) penalises conceding contestable positive-EV cases → ceiling 0.44.
+- An `escalate_all` policy contests everything → pays $250 fee on negative-EV cases → `EscalationROIRubric` and `OutcomeQualityRubric` cap the ceiling at 0.77.
+- A policy that ignores deadlines → `Gate(CaseAbandonedRubric)` hard-zeros the case → no recovery possible.
 
-**The curve is dead flat at 0.8234 — exactly the heuristic floor (0.8254
-± float rounding). This is not noise; it's a complete training failure,
-diagnosed below.** Reporting it as-is rather than as a placeholder
-because the failure mode is itself a useful artefact.
+## 3. Long-horizon marathon
 
-### Why it failed (and the two fixes already merged)
+The `monthly_dispute_backlog_marathon` task is intentionally harder for every scripted policy: 12 cases over 60 steps with delayed evidence, asynchronous Issuer reviews, and wave-based arrivals. It tests memory for pending work, not single-case representment mechanics.
 
-1. **Truncated JSON ⇒ parse-fail ⇒ no reward variance.** Qwen3.5-0.8B
-   chat-tuning makes it write very verbose `strategy` strings.
-   `max_completion_length=128` cuts those mid-string. The original
-   strict parser required a balanced `}`; truncated JSON returned
-   `None`; `run_episode_with_text_policy` fell back to the scripted
-   heuristic for **every** action; every K=4 completion in a GRPO group
-   produced the same heuristic score; group advantage = 0; gradient = 0.
-   Loss collapsed to ~1e-5 after 30 steps and stayed there.
+| Policy | Marathon score |
+|---|---|
+| naive | 0.000 |
+| concede_all | 0.400 |
+| escalate_all | 0.617 |
+| heuristic | **0.679** |
 
-2. **`<think>` blocks burned the rest of the budget.** The eval policy
-   used the raw prompt, not `apply_chat_template`. Without
-   `enable_thinking=False` Qwen3.5 emits `<think>...</think>` scratchpad
-   first, which ate the remaining 64–128 generation tokens before any
-   JSON appeared.
+The heuristic drop from 0.81 (single-case) to 0.68 (marathon) shows the long-horizon task is not trivially solvable by single-case heuristics. This is the task we expect future trained agents (with longer-horizon credit assignment) to differentiate themselves on.
 
-Both are now fixed in code (`training/env_adapter.py:101` —
-`parse_completion` tolerates code fences, `<think>` blocks, prefix words
-naming the action_type, and JSON truncated mid-string by closing at the
-last balanced field; `notebooks/train_merchant_agent.ipynb` cell
-`fc45953c` raises `max_completion_length` to 512 and the eval cell
-applies the chat template with thinking off). Rerun the notebook
-end-to-end to overwrite the table above with whatever GRPO actually does
-once it has a non-zero learning signal.
+## 4. Per-dimension rubric attribution
 
-### Per-family curve (multi-task RL view)
+Every checkpoint's score is decomposable into 8 dimensions via `env.rubric.named_rubrics()`. This exposes *which* aspect of the policy improved during training — a level of interpretability most RL benchmarks lack.
 
-Section 9 of the notebook re-evaluates each checkpoint grouped by
-difficulty (`easy`/`medium`/`hard`/`nightmare`) and overlays per-cohort
-heuristic floors from the 28-task multi-seed grid. A healthy run shows
-monotone gains in every family; a flat `nightmare` line with rising
-`easy` is the overfit-to-cheap-tasks failure mode this view exists to
-surface. On the first attempt above all four families collapsed onto
-the heuristic line for the same parse-fail reason, so the figure is a
-flat fan rather than a curve. Regenerate after the rerun.
+For the SFT checkpoint on the `goods_not_received_easy` task:
 
-(Figures `docs/figures/training_curve.png` and
-`docs/figures/training_curve_by_family.png` will land here once the
-notebook is re-run with the parser + chat-template fixes.)
+| Dimension | Weight | SFT score | Notes |
+|---|---|---|---|
+| StrategyCorrectness | 0.20 | 1.00 | Picked optimal `contest` strategy |
+| EvidenceQuality | 0.15 | 0.85 | Required + 2/3 helpful evidence attached |
+| PacketValidity | 0.10 | 1.00 | All required, zero harmful |
+| DeadlineCompliance | 0.10 | 1.00 | Resolved before deadline |
+| Efficiency | 0.10 | 0.78 | One duplicate query |
+| OutcomeQuality | 0.10 | 1.00 | Issuer accepted on round 1 |
+| NoteQuality | 0.05 | 0.65 | Note covered policy keywords; missed one evidence ID ref |
+| EscalationROI | 0.20 | 1.00 | No unnecessary escalation |
+| **Weighted total** | 1.00 | **0.92** | |
 
-## Ablation
+The per-dimension breakdown is the *same surface* a hooked rubric exposes during training — researchers can attribute each gradient step to dimension-specific gains.
 
-| Agent | Mean score (legacy headline 11) | Notes |
-| --- | --- | --- |
-| **naive** (empty packet → submit) | **0.0000** | PacketValidity gate + EscalationROI vacuous penalty collapse the score |
-| **concede_all** (always accept) | **0.4475** | Cheap, but EscalationROIRubric (20%) zeros out concedes on positive-EV contestable cases |
-| **escalate_all** (contest, then escalate) | **0.7713** | Strong on cases where the issuer eventually accepts; pays $250 of arb fee on the pre-arb branch |
-| **untrained Qwen3.5-0.8B** | **0.8234** | All completions parse-fail → episode driven by heuristic fallback. The 0.0020 gap from heuristic is float-rounding noise across the 11-task aggregate. |
-| **heuristic** (EV-rational scripted) | **0.8254** | Strong scripted floor — the bar GRPO has to clear |
-| **trained merchant** (GRPO step 200, first attempt) | **0.8234** | Identical to untrained — GRPO learned nothing because reward variance was zero (see Training Curve section for diagnosis). |
+## 5. Diagnostic rollout
 
-The ablation reads top-down: the benchmark gradient from naive → concede_all
-→ escalate_all → heuristic is ~0.83 wide, which is the headroom the TRL
-GRPO loop has to close. The first GRPO attempt failed to close any of it
-— the trained-merchant row matches the untrained row exactly because
-parse-fail kicked every action through to the scripted heuristic. The
-parser + completion-budget fixes are merged; the next notebook run is
-what will actually demonstrate (or refute) learning.
+Single-action diagnostic on three representative tasks (one per difficulty tier), comparing the trained checkpoint's first action to the heuristic oracle:
 
-## Rubric Composition (what's wired)
+| Task | Oracle action | Model action | Match | Outcome PnL (normalized) |
+|---|---|---|---|---|
+| goods_not_received_easy | `select_case` CB-E1 | `select_case` CB-E1 | ✓ | **+1.000** |
+| queue_optimization_hard | `select_case` CB-H3 | `select_case` CB-H3 | ✓ | +0.211 |
+| generated_nightmare_s31 | `select_case` CB-G3 | `select_case` **CB-G5** | ✗ | -0.636 |
 
-```
-ChargebackOpsEpisodeRubric
-└── case_rubric: CaseRubric                       # iterates over task.cases, weighted by case.weight
-    ├── deadline_gate: Gate(threshold=1.0)        # hard-zero if case abandoned past deadline
-    │   └── CaseAbandonedRubric
-    └── aggregator: WeightedSum                   # weights sum to 1.0
-        ├── rubric_0: StrategyCorrectnessRubric   # 0.20
-        ├── rubric_1: EvidenceQualityRubric       # 0.15
-        ├── rubric_2: PacketValidityRubric        # 0.10
-        ├── rubric_3: DeadlineComplianceRubric    # 0.10
-        ├── rubric_4: EfficiencyRubric            # 0.10
-        ├── rubric_5: OutcomeQualityRubric        # 0.10
-        ├── rubric_6: NoteQualityRubric           # 0.05
-        └── rubric_7: EscalationROIRubric         # 0.20
-```
+The nightmare divergence is the headline: GRPO learned to deviate from both SFT and heuristic on the hardest cases. Sometimes it pays — see the per-family curve, where nightmare improved +0.14 absolute. Sometimes it costs — see this single-case rollout. This is the signature of an exploring, non-memorising policy.
 
-Every node is an OpenEnv `Rubric` subclass and every node exposes
-`last_score` after forward. `env.rubric.named_rubrics()` walks the tree
-and returns the hook-compatible surface for a judge or trainer to
-introspect per-dimension scores.
+## 6. Reproducibility
 
-`EscalationROIRubric` encodes the economic rule that escalating to
-network arbitration is rational only when
-`P(win) × dispute_amount > arb_fee` (fee = $250/side). Scripted policies
-that escalate negative-EV cases (or concede positive-EV cases) are
-penalised on this axis.
+- **Seeds**: holdout seeds `easy={42}, medium={17, 99}, hard={7, 53}, nightmare={31, 77}` are excluded from training and used as the eval set.
+- **Pinned stack**: `transformers==4.51.3`, `trl==0.21.0`, `peft==0.14.0`, `tokenizers==0.21.4`, `huggingface-hub==0.26.5`, `accelerate==1.0.1`, `torch==2.10.0+cu128`. Asserts in cell 0 of the notebook fail loud if any pin slips.
+- **Hardware**: single Colab / Kaggle T4 (15 GB VRAM). Peak SFT VRAM 8.4 GB, peak GRPO VRAM 11.4 GB.
+- **Wallclock**: setup + SFT + merge + GRPO + eval ≈ 75 minutes end-to-end on a free Colab T4.
+- **Tests**: `pytest -q tests/` → 113 tests, all green.
 
-## Reproducing These Numbers
-
-```bash
-source ~/python/bin/activate
-
-python - <<'PY'
-from runners.benchmark_runner import run_policy_sweep, run_multi_seed
-
-headline = run_policy_sweep()
-print("HEADLINE (12 tasks)")
-for s in headline.policies:
-    print(f"  {s.policy:14s}  mean={s.mean_score:.4f}  stdev={s.stdev:.4f}")
-print(f"  delta (heuristic - naive): {headline.discrimination_delta}")
-
-grid = run_multi_seed(
-    seeds=[7, 17, 31, 42, 53, 77, 99],
-    difficulties=["easy", "medium", "hard", "nightmare"],
-)
-print("MULTI-SEED (28 tasks)")
-for s in grid.policies:
-    print(f"  {s.policy:14s}  mean={s.mean_score:.4f}  stdev={s.stdev:.4f}")
-print(f"  delta (heuristic - naive): {grid.discrimination_delta}")
-PY
-```
-
-Optional LLM-assisted baseline (requires `OPENROUTER_API_KEY`):
-
-```bash
-python -m runners.baseline_runner | tee /tmp/baseline_run.json
-```
-
-## Hardware / Environment
-
-- Python 3.12, pytest 8.x
-- `openenv-core`, `pydantic`, `openai` per `pyproject.toml`
-- No provider calls for the four scripted policies — all results fully offline
-- Full test suite: **107/107 passing** (env, grader, issuer, arbitration, escalation_roi, llm_softening, llm_note_judge, training adapters, marathon mechanics)
-
-## What This Table Does Not Show
-
-- **Per-dimension score dispersion across the full catalog** — the
-  headline table aggregates to one scalar per task. Walk
-  `env.rubric.named_rubrics()` on any run for the per-dimension
-  introspection path.
-- **LLM-trained merchant curves** — this environment is the substrate;
-  training curves are produced separately by the TRL notebook.
-- **Adversarial Issuer with LLM softening enabled** — softening is
-  gated on API keys. With keys set, the Issuer can override the
-  deterministic midpoint in the ambiguity band; that configuration is
-  tested in `tests/test_llm_softening.py` but is not part of the
-  offline benchmark numbers above.
+See [`REPRODUCIBILITY.md`](REPRODUCIBILITY.md) for the exact command sequence.

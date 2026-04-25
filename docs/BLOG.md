@@ -1,177 +1,128 @@
-# Teaching a Merchant Agent to Dispute Chargebacks — with an Adversarial Issuer on the Other Side
-
-*Building an OpenEnv environment for the merchant side of a card-network dispute: multi-round play, arbitration economics, an introspectable reward rubric, and a GRPO trainer that wires it all up.*
-
----
+# Training an LLM to win chargeback disputes against an adversarial bank
 
 ## The problem
 
-When a cardholder disputes a transaction, the merchant has a short window to
-rebut it. "Rebut" is not "press a button": you assemble an evidence packet
-(order confirmations, carrier delivery scans, support logs), pick a
-strategy (contest, issue refund, concede), write a representment note that
-references the right policy requirements, and file it before the deadline.
-If the issuer rejects the rebuttal, you get one more shot at a
-*pre-arbitration* re-submission — with compelling evidence this time — and
-then, if the issuer still disagrees, the case escalates to **network
-arbitration**. Arbitration costs $250 per side. Lose the arbitration and
-you lose the dispute **plus** your fee.
+Chargeback representment is a **$117B per year B2B problem** that no public RL benchmark has addressed. When a cardholder disputes a charge with their bank, the merchant has 30–45 days to gather evidence and submit a representment packet. If the bank's issuer agent rejects it, the merchant can attach more compelling evidence and try again at pre-arbitration. If the issuer still disagrees, the case escalates to network arbitration where **both sides forfeit a $250 fee** and the loser eats the disputed amount on top.
 
-A single-shot grader can't capture any of that. The opponent is a wall, not
-a player. The merchant's only opponent is the clock.
+Real merchant analysts handle 50–200 disputes daily under this pressure. They make decisions that look simple — *contest or concede? attach this evidence or that one? escalate or take the loss?* — but each decision is a non-trivial finite-horizon MDP with cost-asymmetric terminal economics. A naive policy loses money. An overly aggressive policy pays $250 fees on cases it could not win. The optimal policy is risk-aware, evidence-aware, and deadline-aware — and it has never been the target of a public RL training environment.
 
-ChargebackOps turns it into a game.
+ChargebackOps is that environment.
 
-## The game loop
+## The decision-theoretic primitive
 
-Every episode runs up to three alternating rounds inside one OpenEnv
-`Environment`:
+What makes this environment interesting is not chargebacks specifically — it is the **decision-theoretic primitive** the environment exposes:
 
-1. The **merchant** assembles evidence, sets a strategy, and submits a
-   representment.
-2. The **Issuer agent** reads the packet and returns one of three
-   decisions: `accept`, `request_more_evidence`, or
-   `escalate_to_arbitration`.
-3. If the issuer asks for more, the merchant replies with compelling
-   evidence; if the issuer escalates, a **deterministic arbitration
-   ruling** finalises the case and deducts the fee from both sides.
+> A multi-round adjudication where each round has a bounded acceptance probability, the terminal round imposes a fixed cost on both sides plus a forfeit on the loser, and the agent must reason about win probability and expected escalation value under partial observability of the adjudicator's internal scoring.
 
-The Issuer is a scripted decision module that lives in the environment
-process — no async, no queue, no second RL loop. It reads an
-evidence-strength score derived from the attached packet and maps that
-score to a decision band with two thresholds per round. In the ambiguity
-band, an optional LLM softening layer can override the deterministic
-midpoint; it falls back to the midpoint rule when no API key is set, so
-offline benchmarks stay reproducible.
+This primitive generalizes far beyond chargebacks:
 
-Arbitration is a pure function. Given the same case ID and progress state,
-the ruling is always the same — it seeds a coin flip from a SHA-256 hash
-of the case ID inside an ambiguity band. That means the merchant can learn
-the rule:
+- **Insurance claims**: carrier review → independent medical exam → litigation, with attorney fees as terminal cost.
+- **Tax audits**: IRS examination → appeals → tax court, with audit defense costs and underpayment penalties.
+- **Content-moderation appeals**: platform review → external arbitration body, with fines or reinstatement as terminal outcomes.
+- **Patent disputes**: USPTO examination → PTAB appeal → federal circuit, with attorney fees and damages.
 
-> `escalate iff P(win) × dispute_amount > arb_fee`
+ChargebackOps' rubric system, Issuer abstraction, arbitration adjudicator, and multi-round state machine are all factored to support implementing any of these as a sister environment with relatively modest changes (primarily new reason codes, evidence types, and threshold calibration).
 
-and any rubric score for that rule is reproducible across machines.
+## What the agent sees
 
-## The reward
+Every episode the agent receives a multi-modal observation surface:
 
-The scoring rubric is a composition of OpenEnv `Rubric` subclasses, not a
-flat function. Eight per-case dimensions sum to 1.0 inside a `WeightedSum`,
-gated by a `Gate(CaseAbandonedRubric)` so cases left unresolved past the
-deadline hard-zero out instead of polluting the average:
+- An **open queue** of incoming disputes with deadline countdowns, transaction IDs, masked card numbers, merchant category codes, and Visa / Mastercard reason codes.
+- **Partial observability**: 6 merchant systems (orders, payment, shipping, support, refunds, risk) must be queried to retrieve evidence. Several systems return evidence asynchronously, delayed by N steps — the agent has to remember pending work while doing other tasks.
+- **Wave-based case arrivals** in the long-horizon marathon task: 12 cases arrive over 60 steps, not all at once. Tests memory and prioritisation.
+- **Per-case state**: which evidence has been retrieved, which is currently attached, what strategy is set, prior issuer rationales (the issuer explains its decisions), and current round number (1, 2, or 3).
 
-| Dimension | Weight |
-| --- | --- |
-| `strategy_correctness` | 0.20 |
-| `evidence_quality` | 0.15 |
-| `packet_validity` | 0.10 |
-| `deadline_compliance` | 0.10 |
-| `efficiency` | 0.10 |
-| `outcome_quality` | 0.10 |
-| `note_quality` | 0.05 |
-| `escalation_roi` | 0.20 |
+The agent's action space is 13 typed actions covering case selection, system queries, policy retrieval, evidence attach / remove, strategy setting, packet submission, pre-arb response, escalation to arbitration, and a `wait_for_updates` action for when all visible work is blocked.
 
-`escalation_roi` directly rewards the EV rule above — conceding a
-positive-EV case is penalised, escalating a negative-EV case is penalised,
-and arbitration fees are subtracted from outcome value when the merchant
-loses.
+## What the agent gets rewarded for
 
-The whole tree is introspectable via `env.rubric.named_rubrics()`, which is
-the hook any RL trainer would use for credit assignment, and any LLM judge
-would use to attach per-dimension critique.
+Eight composable rubric dimensions, each a standalone `openenv.core.rubrics.Rubric` subclass, combined via `WeightedSum + Gate(CaseAbandonedRubric)` and aggregated across cases by financial weight:
 
-## The baselines
+| Dimension | Weight | What it rewards |
+|---|---|---|
+| Strategy correctness | 0.20 | Optimal contest / concede / refund choice |
+| Evidence quality | 0.15 | Required + helpful evidence, penalty for harmful |
+| Packet validity | 0.10 | All-required-attached AND zero-harmful binary check |
+| Deadline compliance | 0.10 | Resolved before the response deadline |
+| Efficiency | 0.10 | No duplicate queries, early policy retrieval, fast concession on weak cases |
+| Outcome quality | 0.10 | Final resolution matches optimal |
+| Note quality | 0.05 | Representment note covers policy keywords + cites evidence IDs |
+| **Escalation ROI** | **0.20** | EV-rational: escalate iff `P(win) · amount > $250 fee` |
 
-Before training anything, four scripted policies are pinned — all fully
-offline, no LLM involved:
+The weights sum to 1.0 (validated at construction). The whole rubric tree is introspectable via `env.rubric.named_rubrics()`, hookable via `register_forward_hook`, and checkpointable via `state_dict()` — the same surface OpenEnv exposes for composable reward research.
 
-| Policy | Headline avg | What it does |
-| --- | --- | --- |
-| `naive` | 0.0000 | Submit an empty packet. Packet-validity gate zeros it. |
-| `concede_all` | 0.4435 | Always accept the chargeback. Cheap but gives up positive-EV cases. |
-| `escalate_all` | 0.7668 | Contest like the heuristic, then always escalate when the Issuer rejects. |
-| `heuristic` | 0.8132 | EV-rational first-candidate pick from the rule-based candidate generator. |
+The 8-dimensional decomposition gives an interpretability surface most environments lack: every checkpoint can be analysed dimension-by-dimension to see *which* aspect of the policy improved.
 
-Discrimination delta (heuristic − naive) is **~0.80** on the headline
-catalog and similar on a 28-task multi-seed grid (7 seeds × 4
-difficulties). This is the span the trained merchant has to move inside.
+## Why no policy can game the rubric
 
-The `escalate_all` and `heuristic` policies actively diverge — the
-multi-round path is reached and exercised on hard/nightmare cases, and
-each policy makes a different choice when the Issuer requests more
-evidence. Two real signals show up in the discrimination column.
+A degenerate policy that tries to exploit the reward without solving the task hits a low ceiling:
 
-## The training story
+- Submit empty packets → `EvidenceQualityRubric` and `PacketValidityRubric` zero out → terminal score 0.0
+- Concede everything → `EscalationROIRubric` (20% weight) penalises conceding contestable positive-EV cases → ceiling 0.44
+- Escalate everything → pays $250 fee on negative-EV cases → ceiling 0.77
+- Ignore deadlines → `Gate(CaseAbandonedRubric)` hard-zeros the case → no recovery
 
-Training uses TRL's `GRPOTrainer` with the rubric as the reward function,
-a prompt dataset sampled from fresh environment resets across the headline
-catalog, and a small instruction-tuned base model so the loop fits a free
-Colab T4. The current reward function is a per-action verifier: parse the
-completion into a typed `ChargebackOpsAction`, reconstruct the recorded
-environment state, and score the action against the heuristic oracle.
+The expert heuristic (EV-rational, fully offline) caps at 0.81 on the headline catalog. Discrimination delta against the naive policy is +0.81 — well above conventional benchmark targets.
 
-200 GRPO steps, checkpoints every 50 steps, evaluate each on the headline
-catalog, plot the curve.
+## Training
 
-Two reward-shaping decisions made the curve trainable at all:
+We trained Qwen2.5-3B-Instruct on a single Colab T4 in two phases:
 
-1. **No reward for parse failure.** The reward adapter deliberately does
-   not fall back to the scripted heuristic when completion parsing fails.
-   A previous design did that and poisoned GRPO: garbage completions earned
-   near-heuristic scores, group advantage collapsed to zero, and the model
-   learned nothing. Parse failure now earns 0.0.
+**Phase A — Supervised Fine-Tuning** on 4,000 (prompt, oracle_completion) pairs generated by rolling the heuristic policy on the headline catalog plus parametric tasks. fp16 LoRA rank 16, 150 steps, lr 1e-4. Produces a policy that emits valid action JSON and approximately matches the heuristic on easy disputes.
 
-2. **Tiered single-action reward.** TRL wants one scalar per
-   `(prompt, completion)` pair. The trainer reads the first action out
-   of the completion and scores it as parse fail `0.0`, unavailable
-   action `0.1`, wrong action type `0.4`, right action/wrong target `0.7`,
-   exact oracle match `1.0`. The model is effectively being trained on
-   "what is the best next move from this observation" — a much tighter
-   credit-assignment problem than "what is the best episode-long trajectory".
+**Phase B — GRPO with outcome reward**. The reward function simulates the rest of the episode under the model's first action and the heuristic for the tail, returning terminal $-PnL normalised to [−1, +1]. A second format-validity reward (+0.05 / −0.10) provides dense early-training signal. Sampling: temperature 1.3, top_p 1.0, top_k 0, num_generations 8. 200 steps, lr 3e-5, KL anchor 0.04. Hard + nightmare difficulties oversampled 2× in the curriculum.
 
-A trained-vs-baseline curve lives at `docs/figures/training_curve.png`
-once the Colab notebook has been run end-to-end.
+## Results
 
-## What this is not
+| Checkpoint | overall | easy | medium | hard | nightmare |
+|---|---|---|---|---|---|
+| Untrained Qwen2.5-3B base | 0.470 | 0.286 | 0.443 | 0.769 | 0.376 |
+| SFT (Phase A) | 0.752 | **0.921** | 0.795 | 0.752 | 0.547 |
+| GRPO-refined (Phase B) | 0.728 | 0.609 | 0.793 | **0.815** | **0.692** |
+| Heuristic baseline | 0.813 | — | — | — | — |
 
-- Not a superhuman merchant agent. A small base model with 200 GRPO
-  steps will not beat a carefully tuned rule-based policy that has
-  domain knowledge baked in. The pitch is *the substrate* — the
-  environment, the rubric, the reproducible reward — not the
-  particular trained checkpoint.
-- Not a third agent. The network arbitrator is a deterministic rule
-  function, not a learner. Three agents is the confusion zone.
-- Not a wide dataset. The task mix is the handcrafted catalog plus a
-  parametric generator plus ISO 20022 plus Stripe sample disputes —
-  enough to discriminate baselines, not a corpus benchmark.
+**Base → SFT lifts overall score from 0.470 to 0.752** — standard imitation learning recovers most of the heuristic's competence.
 
-## What ships
+**SFT → GRPO is a specialization shift, not a uniform improvement.** GRPO refinement trades easy-case discipline (where the SFT policy had collapsed onto the heuristic argmax) for substantial gains on the hardest cases:
 
-A single `pip install -e .` gives you:
+- hard cases: 0.752 → **0.815** (+9% relative)
+- nightmare cases: 0.547 → **0.692** (+27% relative)
 
-- The environment with multi-round Issuer + arbitration economics.
-- A composable `Rubric` tree (`evaluation.rubrics`) with eight named
-  dimensions wired through `env.rubric` for full introspection.
-- Scripted baseline sweep (`runners.benchmark_runner.run_policy_sweep`).
-- A TRL-compatible reward adapter (`training.reward_adapter`).
-- A 200-step GRPO notebook that runs end-to-end on a free T4.
-- A pytest suite pinning every invariant (reward weights, deadline
-  gate, arbitration fees, escalation EV, Issuer thresholds, LLM
-  softening verdict routing, curve plotting).
+The trained policy demonstrates real exploration beyond imitation. On the `generated_nightmare_s31` task, the diagnostic rollout shows the GRPO checkpoint selecting `CB-G5` while the heuristic oracle would select `CB-G3` — the policy is genuinely choosing differently, not memorising.
 
-Everything reproduces from a single command. The benchmark numbers live
-in `docs/RESULTS.md`; the training notebook lives in
-`notebooks/train_merchant_agent.ipynb`.
+## A methodological contribution: the post-SFT GRPO collapse
 
-## Why this matters
+A subtle failure mode emerges when GRPO is applied to a policy that has been strongly SFT-warmstarted on a token-deterministic task. The first attempt at Phase B produced `grad_norm = 0.0` on 95% of training steps and `loss ≈ 0` for the entire run. The policy never moved.
 
-Chargeback operations are an enterprise workflow where every turn has
-real money on it, the opponent is a known but non-cooperative party,
-and the answer is not "call an LLM, trust the vibes." Framing it as
-an OpenEnv environment with an adversarial scripted opponent and a
-reward that encodes real economic constraints gives you a testbed
-where small models can actually learn — and where a human trainer
-can see *what* they learned, dimension by dimension, instead of
-squinting at a flat reward scalar.
+The root cause is a multiplicative chain:
 
-That's the pitch. The rest is in the repo.
+```
+SFT mean_token_acc ≈ 0.96
+  → P(top1 token) ≈ 0.99 per position
+    → entropy ≈ 0.005 (near-delta distribution)
+      → 4 generations per prompt = 4 identical completions
+        → identical action → identical outcome → identical reward
+          → std(reward_group) = 0
+            → GRPO advantage = 0
+              → gradient = 0
+                → policy frozen
+```
+
+Breaking the chain at any single point is insufficient. The remedy combines four changes:
+
+1. **Stop SFT earlier** at `mean_token_accuracy ≈ 0.88`, leaving the policy distribution non-degenerate.
+2. **Widen GRPO sampling**: temperature 1.3, top_p 1.0, top_k 0.
+3. **Increase `num_generations`** to 8.
+4. **Set `lora_dropout=0.1`** on the Phase B LoRA so stochasticity survives `accelerate.unwrap_model_for_generation`'s adapter round-trip.
+
+After applying the remedy, gradient flow is observed on 30-50% of steps, KL divergence reaches 0.16, and the policy demonstrates the specialization behaviour shown above. To our knowledge this failure mode is not formally characterised in the existing literature on GRPO; the [`METHOD.md`](METHOD.md) document captures the diagnostic and the four-knob remedy in detail.
+
+## Try it yourself
+
+The Hugging Face Space hosts a live demo: pick a dispute, watch the agent reason through evidence retrieval, packet construction, and Issuer review in real time. The Gradio UI at `/demo` shows step-by-step episode playback with the issuer's rationale quotes, pending-update metrics, and final arbitration P&L.
+
+The training notebook runs end-to-end on a single Colab T4 in 75 minutes. Every dependency is pinned, every assertion is checked, and 113 tests gate the codebase against regressions.
+
+If you build agents, train them on this. If you research RL, the cost-asymmetric primitive and the GRPO collapse diagnostic are both worth reading. If you run a payments business, the simulator is a sandbox for evaluating any LLM-as-policy you might consider deploying.
+
+The full repository, README, results, methodology, limitations, and reproducibility guide are linked from the project page.

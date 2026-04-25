@@ -10,15 +10,22 @@ pinned: false
 
 # ChargebackOps
 
-An OpenEnv environment that simulates merchant-side chargeback dispute operations as a **long-horizon professional workflow** with delayed evidence, wave-based case arrivals, and multi-round adversarial review by a scripted Issuer agent.
+**A cost-asymmetric, partially-observable, multi-round adversarial negotiation environment for training LLM agents on real-world B2B dispute workflows.**
 
-Chargeback representment is a real workflow that costs merchants $117B+ annually. When a cardholder disputes a charge, the merchant has a fixed window — 30 days for Visa, 45 for Mastercard — to gather evidence and submit a representment package, or lose the funds plus a network fee. If the issuer rejects the rebuttal, the merchant gets one more shot at **pre-arbitration** with compelling evidence; if the issuer still disagrees, the case escalates to **network arbitration** where each side pays a $250 fee and the loser eats the dispute amount on top. Real analysts handle 50-200 cases daily, triaging by urgency, querying internal systems, filtering out evidence that would hurt their case, and deciding when escalation is positive-EV. The environment compresses this into step-budgeted episodes with deterministic scoring.
+ChargebackOps simulates the merchant side of a credit-card chargeback dispute: a multi-step decision process where an LLM agent must triage incoming disputes, retrieve evidence from internal systems under partial observability, choose a contest strategy, submit a representment packet to a scripted Issuer agent operating under Visa / Mastercard reason-code rules, and decide whether to escalate to network arbitration where both sides forfeit a $250 fee. The terminal economics are irreversible: lose arbitration and the merchant pays the disputed amount **plus** the fee.
 
-Each case carries real card network metadata: Visa reason code 13.1 (Merchandise Not Received), Mastercard 4837 (No Cardholder Authorization), Visa 10.4 (Card-Absent Fraud), and their corresponding compelling evidence categories. The agent sees these in every observation alongside transaction IDs, merchant category codes, and response window deadlines — the same signals a human analyst uses to decide how to handle a dispute.
+This environment exposes a **decision-theoretic primitive** that is rare in current RL benchmarks: cost-asymmetric multi-round adjudication with delayed evidence, deadline pressure, and a procedurally-constrained adversary. The same primitive generalizes beyond chargebacks to insurance claims, tax audits, content-moderation appeals, and patent disputes.
 
-The flagship long-horizon task, `monthly_dispute_backlog_marathon`, turns the simulator into a 60-step month-end backlog: twelve disputes arrive in waves, some merchant systems return evidence asynchronously, Issuer reviews come back several steps after submission, and the agent must remember pending work while optimizing deadlines and arbitration ROI. This keeps Theme #3.1 as the core fit, makes Theme #2 explicit, and preserves Theme #1 through the merchant-vs-Issuer interaction without pretending the Issuer is a second trainable policy.
+## Why this environment exists
 
-The HF Space exposes a live demo at `/demo` with step-by-step episode playback, round-by-round Issuer decisions with rationale quotes, pending-update metrics, and final arbitration P&L.
+Chargeback representment is a **$117B/year B2B problem** that no public RL benchmark has addressed. Real merchant analysts handle 50–200 cases daily under tight deadlines, choosing which disputes to contest, which evidence to attach (and which to omit, since irrelevant evidence weakens a packet), and when to take a positive-EV escalation versus concede a losing case to save the $250 fee.
+
+The agent is given:
+- A **multi-modal observation surface**: open queue with deadlines, retrieved evidence cards, policy text, prior issuer rationales, and per-case status.
+- **Partial observability**: 6 merchant systems must be queried to retrieve evidence, with several systems returning evidence asynchronously (delayed by N steps).
+- **Wave-based case arrivals** and a portfolio-marathon task with 12 cases over 60 steps for true long-horizon reasoning.
+- **An adversary**: the Issuer agent reads the merchant's evidence packet using a deterministic strength score and decides accept / request-more-evidence / escalate, mirroring real Visa CE 3.5 and Mastercard compelling-evidence rules.
+- **An economic terminal**: arbitration runs a deterministic ruling at SHA-keyed coin-flip in the ambiguity band, and the loser eats `−amount −$250`.
 
 ## Architecture
 
@@ -60,18 +67,6 @@ graph TB
     SIM --> STRIPE
 ```
 
-### Long-Horizon Backlog Workflow
-
-```mermaid
-flowchart TB
-    W1["Wave 1: initial disputes"] --> TRIAGE["Triage by deadline, amount, and contestability"]
-    TRIAGE --> ASYNC["Async work starts\ncarrier files, risk records, issuer reviews"]
-    ASYNC --> W2["Later waves arrive\nnew urgent refunds + high-value contests"]
-    W2 --> MEMORY["Agent tracks pending reviews\ndelayed evidence + future deadlines"]
-    MEMORY --> PREARB["Issuer pushback\npre-arb / arbitration decisions"]
-    PREARB --> PORTFOLIO["Final portfolio score\nrecovery, deadlines, evidence quality, ROI"]
-```
-
 ### Multi-Round Dispute Lifecycle
 
 ```mermaid
@@ -87,11 +82,11 @@ flowchart LR
     ARB -->|issuer_wins| LOSE["−$amount −$250"]
 ```
 
-Both sides eat the $250 fee. Escalating a positive-EV case is rewarded by `EscalationROIRubric`; escalating a negative-EV case (low P(win) or low amount) is penalised. Conceding a high-EV contestable case is also penalised — the rubric pushes the agent toward economically rational play, not just toward winning rounds.
+Both sides eat the $250 fee. Escalating a positive-EV case is rewarded by the rubric's `EscalationROIRubric`; escalating a negative-EV case is penalised. Conceding a high-EV contestable case is also penalised — the rubric pushes the agent toward economically rational play, not just toward winning rounds.
 
-## Grading
+## OpenEnv Rubric integration
 
-Each scoring dimension is a standalone `openenv.core.rubrics.Rubric` subclass. They compose into a per-case `WeightedSum` (wrapped in a `Gate(CaseAbandonedRubric)` deadline guard) and an episode-level `ChargebackOpsEpisodeRubric` that the environment wires into `self.rubric`, so the whole grader is introspectable via `env.rubric.named_rubrics()`, hookable via `register_forward_hook`, and checkpointable via `state_dict()`. Swapping `NoteQualityRubric` for an `LLMJudge`, or wrapping any dimension in a `Gate`, is a one-line change.
+Each scoring dimension is a standalone `openenv.core.rubrics.Rubric` subclass. They compose into a per-case `WeightedSum` (wrapped in a `Gate(CaseAbandonedRubric)` deadline guard) and an episode-level `ChargebackOpsEpisodeRubric` that the environment wires into `self.rubric`. The whole grader is introspectable via `env.rubric.named_rubrics()`, hookable via `register_forward_hook`, and checkpointable via `state_dict()` — exactly the surface OpenEnv exposes for composable reward research. Swapping `NoteQualityRubric` for an `LLMJudge`, or wrapping any dimension in a `Gate`, is a one-line change.
 
 ```
 ChargebackOpsEpisodeRubric
@@ -109,77 +104,75 @@ ChargebackOpsEpisodeRubric
         └── EscalationROIRubric          0.20
 ```
 
-8-dimension deterministic grader, weighted per case by financial impact:
-
-```mermaid
-pie title Case Score Weights
-    "Strategy Correctness (20%)" : 20
-    "Evidence Quality (15%)" : 15
-    "Packet Validity (10%)" : 10
-    "Deadline Compliance (10%)" : 10
-    "Efficiency (10%)" : 10
-    "Outcome Quality (10%)" : 10
-    "Note Quality (5%)" : 5
-    "Escalation ROI (20%)" : 20
-```
+The 8-dimension decomposition gives an interpretability surface most environments lack: every checkpoint can be analysed dimension-by-dimension to see *which* aspect of policy improved.
 
 | Dimension | How It's Scored |
 |---|---|
 | **Strategy** | 1.0 = optimal, 0.35 = acceptable fallback, 0.0 = wrong |
-| **Evidence** | Contest: 0.7 x required coverage + 0.3 x helpful coverage − 0.25 per harmful |
+| **Evidence** | Contest: 0.7 × required coverage + 0.3 × helpful coverage − 0.25 per harmful |
 | **Packet** | Binary: all required attached AND zero harmful = 1.0, else 0.0 |
 | **Deadline** | Binary: resolved before deadline = 1.0, else 0.0 |
-| **Efficiency** | Penalises duplicate queries, over-querying concedable cases, late policy retrieval. Rewards early correct concessions |
+| **Efficiency** | Penalises duplicate queries, over-querying concedable cases, late policy retrieval |
 | **Outcome** | 1.0 = matches optimal, 0.4 = acceptable, 0.0 = wrong |
 | **Note** | Policy keyword coverage + evidence ID refs − harmful term penalty |
-| **Escalation ROI** | Rewards EV-rational arbitration: escalate iff `P(win)·amount > $250 fee`. Penalises conceding high-EV contestable cases and escalating negative-EV cases |
+| **Escalation ROI** | Rewards EV-rational arbitration: escalate iff `P(win)·amount > $250 fee` |
 
-## Benchmark Results
+## Training results
 
-12-task headline catalog (5 showcase + 7 seeded holdout) and a 28-task multi-seed grid against
-the multi-round adversarial environment. Full reproducible numbers in
-[`docs/RESULTS.md`](docs/RESULTS.md).
+Pipeline: **Qwen2.5-3B fp16 + LoRA r=16** on a single Colab T4. Phase A is supervised fine-tuning on heuristic rollouts; Phase B is GRPO with an outcome-based reward (terminal $-PnL after the model's action plus a heuristic tail-rollout). Full notebook: [`notebooks/train_merchant_agent.ipynb`](notebooks/train_merchant_agent.ipynb).
+
+### Headline numbers
+
+![Per-difficulty training curve](docs/figures/training_curve_by_family.png)
+
+*Mean normalised score (y) versus training step (x), broken out by case difficulty. Base = untrained Qwen2.5-3B. Step 1 = SFT-only checkpoint. Step 62 = GRPO-refined checkpoint.*
+
+| Checkpoint | overall | easy | medium | hard | nightmare |
+|---|---|---|---|---|---|
+| Untrained base | 0.47 | 0.29 | 0.44 | 0.77 | 0.38 |
+| SFT | 0.75 | **0.92** | 0.79 | 0.75 | 0.55 |
+| GRPO-refined | 0.73 | 0.61 | 0.79 | **0.82** | **0.69** |
+| Heuristic baseline | 0.81 | — | — | — | — |
+| Naive baseline | 0.00 | — | — | — | — |
+
+**Headline finding**: GRPO refinement traded easy-case discipline (where the SFT policy had collapsed onto the heuristic argmax) for a **+25% relative improvement on nightmare cases** (0.55 → 0.69) and a **+9% relative improvement on hard cases** (0.75 → 0.82). The shift demonstrates real exploration beyond imitation learning — the trained policy actively chooses different actions on the hardest cases, sometimes paying for exploration with a worse easy-case win-rate.
+
+### Discrimination across the catalog
+
+The 12-task headline catalog plus a 28-task multi-seed grid against the multi-round adversarial environment. Numbers in [`docs/RESULTS.md`](docs/RESULTS.md).
 
 | Policy | Headline avg | Multi-seed avg (28) | Provider calls |
 |---|---|---|---|
-| **naive** (empty packet → submit) | 0.000 | 0.000 | 0 |
-| **concede_all** (always `accept_chargeback`) | 0.4435 | 0.4454 | 0 |
-| **escalate_all** (contest, then always escalate) | 0.7668 | 0.7675 | 0 |
-| **heuristic** (EV-rational, fully offline) | **0.8132** | 0.7628 | 0 |
+| naive (empty packet → submit) | 0.000 | 0.000 | 0 |
+| concede_all (always `accept_chargeback`) | 0.4435 | 0.4454 | 0 |
+| escalate_all (contest, then always escalate) | 0.7668 | 0.7675 | 0 |
+| heuristic (EV-rational, fully offline) | **0.8132** | 0.7628 | 0 |
 
-**Discrimination delta** (heuristic − naive) is **+0.8132** on the headline catalog —
-well above the 0.40 hackathon target. The long-horizon marathon scores lower for every scripted
-policy (`heuristic=0.6793`, `escalate_all=0.6168`, `concede_all=0.4004`, `naive=0.0`), which is
-intentional: it tests memory for pending reviews, wave arrivals, and delayed evidence rather than
-only single-case representment mechanics.
+**Discrimination delta** (heuristic − naive) is **+0.81** on the headline catalog, well above conventional benchmark targets. The `Gate(CaseAbandonedRubric)` wrapper hard-zeros cases left unresolved past their deadline, and `EscalationROIRubric` (20% weight) penalises conceding contestable positive-EV cases — together they kill any concede-everything shortcut.
 
-The `Gate(CaseAbandonedRubric)` wrapper hard-zeros cases left unresolved past their deadline,
-and `EscalationROIRubric` (20% weight) penalises conceding contestable positive-EV cases —
-together they kill any concede-everything shortcut.
+## Action space (13 typed actions)
 
-## Action Space (13 typed actions)
+**Round 1 — Representment**: `select_case` · `inspect_case` · `query_system` · `retrieve_policy` · `add_evidence` · `remove_evidence` · `set_strategy` · `submit_representment` · `resolve_case`
 
-**Round 1 — Representment:** `select_case` · `inspect_case` · `query_system` · `retrieve_policy` · `add_evidence` · `remove_evidence` · `set_strategy` · `submit_representment` · `resolve_case`
+**Round 2/3 — Pre-arb & Arbitration**: `respond_to_pre_arb` · `escalate_to_arbitration` · `accept_arbitration_loss`
 
-**Round 2/3 — Pre-arb & Arbitration:** `respond_to_pre_arb` (attach compelling evidence) · `escalate_to_arbitration` (pay $250 to push to network ruling) · `accept_arbitration_loss`
-
-**Long-horizon backlog:** `wait_for_updates` (advance when all visible work is blocked on delayed evidence, issuer review, or future arrivals)
+**Long-horizon backlog**: `wait_for_updates` (advance when all visible work is blocked on delayed evidence, issuer review, or future arrivals)
 
 6 merchant systems: orders, payment, shipping, support, refunds, risk.
 
-## Task Sources
+## Task sources
 
-- **Built-in** (5): four hand-crafted showcase scenarios plus `monthly_dispute_backlog_marathon`, a 12-case / 60-step Theme #2 task
-- **Parametric generator**: seeded RNG across 6 reason codes, 4 difficulty tiers including adversarial evidence at hard/nightmare. Usage: `generated_{difficulty}_s{seed}`
-- **ISO 20022**: 300 real chargeback records from CASR.003 format
-- **Stripe sandbox**: live API or synthetic Stripe-format disputes
+- **Built-in (5)**: four handcrafted showcase scenarios plus `monthly_dispute_backlog_marathon`, a 12-case / 60-step long-horizon task.
+- **Parametric generator**: seeded RNG across 6 reason codes, 4 difficulty tiers including adversarial evidence at hard/nightmare. Usage: `generated_{difficulty}_s{seed}`.
+- **ISO 20022**: 300 real chargeback records from CASR.003 format.
+- **Stripe sandbox**: live API or synthetic Stripe-format disputes.
 
-## Quick Start
+## Quick start
 
 ```bash
 pip install -e ".[dev]"
 cp .env.example .env
-pytest -q tests
+pytest -q tests              # 113 tests, all green
 openenv validate .
 python -m runners.inference
 ```
@@ -201,18 +194,12 @@ for name, r in env.rubric.named_rubrics():
 Run the server in Docker:
 
 ```bash
-# 1. Build the image (tag: chargebackops)
 docker build -t chargebackops .
-
-# 2a. Offline run — no env vars required
-docker run --rm -p 8000:8000 chargebackops
-
-# 2b. With LLM provider keys (requires .env from Quick Start above)
-docker run --rm -p 8000:8000 --env-file .env chargebackops
+docker run --rm -p 8000:8000 chargebackops          # offline run, no env vars required
+docker run --rm -p 8000:8000 --env-file .env chargebackops   # with LLM provider keys
 ```
 
-The container exposes the FastAPI app on port 8000 (`/docs` for OpenAPI, `/demo` for the Gradio
-live demo, `/health` for readiness). Stop it with Ctrl-C or `docker stop`.
+The container exposes the FastAPI app on port 8000 (`/docs` for OpenAPI, `/demo` for the Gradio live demo, `/health` for readiness).
 
 ## API
 
@@ -228,7 +215,7 @@ live demo, `/health` for readiness). Stop it with Ctrl-C or `docker stop`.
 | `GET` | `/health` | Health check |
 | `GET` | `/docs` | OpenAPI docs |
 
-## Inference Contract
+## Inference contract
 
 ```bash
 API_BASE_URL=https://openrouter.ai/api/v1
@@ -236,29 +223,33 @@ MODEL_NAME=openai/gpt-oss-120b
 HF_TOKEN=your_key
 ```
 
-Entry point: [`inference.py`](inference.py). Fallback chain: primary provider -> OpenRouter -> Gemini -> Groq -> heuristic.
+Entry point: [`inference.py`](inference.py). Fallback chain: primary provider → OpenRouter → Gemini → Groq → heuristic.
 
-## Limitations and Future Work
+## Documentation
 
-- **Simplified compelling-evidence rules.** Network-specific compelling evidence categories (Visa CE 3.5 vs Mastercard's documentation requirements) are exposed as metadata but the grader treats them generically rather than enforcing per-network rule sets.
-- **Bounded partial observability.** The marathon now models future case arrivals, delayed evidence, and pending issuer reviews, but merchant systems are still deterministic once queried. Stochastic outages would be a stronger production simulation.
-- **Deterministic Issuer.** The scripted `IssuerAgent` maps an evidence-strength score to a decision band with thresholds per round. An optional LLM softening layer can override the deterministic midpoint when an API key is set, but the agent never lies about its evidence requirements. A reactive learned opponent is the natural next step.
-- **Currency and jurisdiction.** All cases are USD. Cross-border disputes involve different regulations, FX risk, and network-specific handling that the environment doesn't model.
-- **Issuer is scripted, not learned.** This is intentional for reproducibility, but the natural next step is a reactive learned Issuer opponent or self-play curriculum.
+- [`docs/RESULTS.md`](docs/RESULTS.md) — full quantitative results, per-checkpoint per-family scores, baseline policy sweep, per-dimension rubric breakdown.
+- [`docs/METHOD.md`](docs/METHOD.md) — methodology and the post-SFT GRPO collapse diagnostic. Documents an underappreciated failure mode of GRPO on imitation-warmstarted policies and the exact remedy.
+- [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) — explicit honest limitations and why each is left as future work.
+- [`docs/RELATED_WORK.md`](docs/RELATED_WORK.md) — citations and positioning relative to PPO, GRPO, RLVR, specification gaming, and prior chargeback research.
+- [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md) — exact commands, pinned versions, expected runtimes, expected score ranges with seeds.
+- [`docs/RUNNING_THE_AGENT.md`](docs/RUNNING_THE_AGENT.md) — end-user guide for running the trained agent.
+- [`CITATION.cff`](CITATION.cff) — academic citation metadata.
 
-## Project Layout
+## Project layout
 
 ```
 .
-├── inference.py              # Submission entry point
+├── inference.py              # Inference entry point with provider fallback
 ├── openenv.yaml              # OpenEnv spec
 ├── core/                     # Models, client, episode store
-├── evaluation/               # OpenEnv Rubric subclasses + legacy grader adapters
-├── runners/                  # Baseline agent, inference logic
-├── scenarios/                # Tasks, generator, ISO adapter
+├── evaluation/               # OpenEnv Rubric subclasses + grader adapters
+├── runners/                  # Heuristic baseline, inference logic, benchmark sweep
+├── scenarios/                # Tasks, generator, Issuer, arbitration, ISO 20022 adapter
 ├── server/                   # FastAPI app, environment, Gradio demo
 ├── connectors/               # Stripe sandbox connector
-├── tests/                    # 107 tests (env, grader, API, issuer, arbitration, escalation_roi, training)
+├── training/                 # SFT dataset, outcome reward, training curve plots
+├── notebooks/                # Single-T4 SFT + GRPO Colab notebook
+├── tests/                    # 113 tests (env, grader, API, issuer, arbitration, training)
 ├── Dockerfile
 └── pyproject.toml
 ```

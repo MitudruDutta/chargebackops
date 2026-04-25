@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+message: "If you use ChargebackOps in your research, please cite it as below."
+title: "ChargebackOps: A cost-asymmetric multi-round adversarial environment for training LLM agents on B2B dispute workflows"
+abstract: |
+  ChargebackOps is an OpenEnv-compatible reinforcement learning environment that
+  simulates the merchant side of a credit-card chargeback dispute. The environment
+  exposes a decision-theoretic primitive — multi-round adjudication with cost-
+  asymmetric terminal economics, partial observability, and a procedurally-
+  constrained adversary — that is rare in current RL benchmarks and generalizes
+  beyond chargebacks to insurance claims, tax audits, content-moderation appeals,
+  and patent disputes. The repository ships an 8-dimension decomposable Rubric
+  system, a parametric task generator, an ISO 20022 adapter, a Stripe sandbox
+  connector, and a reproducible single-T4 SFT + GRPO training pipeline that
+  documents and remedies a previously-undescribed post-SFT GRPO collapse failure
+  mode on token-deterministic tasks.
+type: software
+authors:
+  - family-names: Dutta
+    given-names: Mitudru
+    email: mitudrudutta72@gmail.com
+repository-code: "https://github.com/MitudruDutta/ChargeBackOps"
+url: "https://huggingface.co/spaces/ThundeR0rrr/ChargeBackOps"
+license: MIT
+keywords:
+  - reinforcement learning
+  - large language models
+  - multi-round adjudication
+  - chargeback disputes
+  - cost-asymmetric environments
+  - GRPO
+  - RLVR
+  - OpenEnv
+preferred-citation:
+  type: software
+  title: "ChargebackOps: A cost-asymmetric multi-round adversarial environment for training LLM agents on B2B dispute workflows"
+  authors:
+    - family-names: Dutta
+      given-names: Mitudru
+  url: "https://github.com/MitudruDutta/ChargeBackOps"
+  year: 2026
