@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -59,10 +60,39 @@ try:
 except Exception:
     logging.getLogger(__name__).warning("Gradio demo unavailable", exc_info=True)
 
+# Canonical Space card URL for README / judges (not the relative /demo path).
+_DEFAULT_DEMO_SPACE_URL = "https://huggingface.co/spaces/mitudrudutta/ChargeBackOps"
+
+
+def _canonical_demo_space_url() -> str:
+    """Human-facing Hugging Face Space URL (Space card + embedded app)."""
+
+    space_id = (os.environ.get("SPACE_ID") or "").strip()
+    if space_id:
+        return f"https://huggingface.co/spaces/{space_id}"
+    override = (os.environ.get("DEMO_SPACE_URL") or "").strip()
+    if override:
+        return override
+    return _DEFAULT_DEMO_SPACE_URL
+
+
+def _interactive_demo_url() -> str:
+    """Same-origin Gradio mount; absolute URL when Hugging Face sets SPACE_HOST."""
+
+    host = (os.environ.get("SPACE_HOST") or "").strip()
+    if host:
+        return f"https://{host.rstrip('/')}/demo/"
+    return "/demo"
+
 
 @app.get("/")
 def root() -> JSONResponse:
-    """Return a lightweight root response for HF Space and validator pings."""
+    """Return a lightweight root response for HF Space and validator pings.
+
+    ``demo_url`` is always the canonical Hugging Face Space page (shareable,
+    stable, matches README badges). ``interactive_demo_url`` is the live
+    Gradio app on this deployment (relative locally, absolute on Spaces).
+    """
 
     return JSONResponse(
         {
@@ -71,7 +101,8 @@ def root() -> JSONResponse:
             "docs_url": "/docs",
             "health_url": "/health",
             "tasks_url": "/tasks",
-            "demo_url": "/demo",
+            "demo_url": _canonical_demo_space_url(),
+            "interactive_demo_url": _interactive_demo_url(),
         }
     )
 

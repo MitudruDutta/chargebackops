@@ -16,6 +16,8 @@ def test_root_endpoint_payload():
     assert b"ChargebackOps" in response.body
     assert b"tasks_url" in response.body
     assert b"demo_url" in response.body
+    assert b"huggingface.co/spaces" in response.body
+    assert b"interactive_demo_url" in response.body
 
 
 def test_baseline_endpoint_works_without_api_key(monkeypatch):
