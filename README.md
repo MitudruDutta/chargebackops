@@ -32,7 +32,7 @@ pinned: false
 > · 📺 [**Walkthrough video (YouTube)**](https://youtu.be/7dz37JTTMo4)
 > · 🤗 [**Hugging Face Space**](https://huggingface.co/spaces/mitudrudutta/ChargeBackOps)
 > · 🧪 [**Latest training run (Colab — iter 5, 200 GRPO steps)**](https://colab.research.google.com/drive/1GtLH6_b10oHlAnnGq4hnBkcGJ-pE_za5?usp=sharing)
-> · 🧪 [**Previous training run (Colab — iter 3, 62 GRPO steps)**](https://colab.research.google.com/drive/1AjG3Sv7FnMeOSls6JMzTunkMzlJi_ySu?usp=sharing)
+> · 🧪 [**Previous training run (Colab — iter 4, 62 GRPO steps)**](https://colab.research.google.com/drive/1AjG3Sv7FnMeOSls6JMzTunkMzlJi_ySu?usp=sharing)
 > · 🧠 [**Specification-gaming write-up**](docs/SPECIFICATION_GAMING.md)
 
 ## TL;DR (60-second read)
@@ -148,7 +148,7 @@ Pipeline: **Qwen2.5-3B fp16 + LoRA r=16** on a single Colab T4. Phase A is super
 
 - **Repo notebook (canonical):** [`notebooks/train_merchant_agent.ipynb`](notebooks/train_merchant_agent.ipynb)
 - **Latest Colab run (iter 5, 200 GRPO steps):** [open in Colab](https://colab.research.google.com/drive/1GtLH6_b10oHlAnnGq4hnBkcGJ-pE_za5?usp=sharing)
-- **Previous Colab run (iter 3, 62 GRPO steps):** [open in Colab](https://colab.research.google.com/drive/1AjG3Sv7FnMeOSls6JMzTunkMzlJi_ySu?usp=sharing)
+- **Previous Colab run (iter 4, 62 GRPO steps):** [open in Colab](https://colab.research.google.com/drive/1AjG3Sv7FnMeOSls6JMzTunkMzlJi_ySu?usp=sharing)
 
 ### Five training iterations, three failure modes
 
