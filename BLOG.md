@@ -131,16 +131,7 @@ That is a complete evidence-backed operational path.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    A[Agent] --> B[Typed Action]
-    B --> C[ChargebackOpsEnvironment]
-    C --> D[Scenario Data]
-    C --> E[Issuer Review]
-    C --> F[Arbitration]
-    C --> G[Rubric Grader]
-    G --> H[Observation + Score]
-```
+![Architecture diagram](docs/figures/architecture.png)
 
 The environment has five main layers:
 
@@ -154,17 +145,7 @@ The environment has five main layers:
 
 ## Multi-Round Dispute Lifecycle
 
-```mermaid
-flowchart LR
-    A[Round 1: Representment] --> B{Issuer Review}
-    B -->|Accept| C[Merchant Wins]
-    B -->|Request More Evidence| D[Round 2: Pre-Arbitration]
-    D --> E{Issuer Re-Review}
-    E -->|Accept| C
-    E -->|Escalate| F[Round 3: Arbitration]
-    F -->|Merchant Wins| G[Amount - $250 Fee]
-    F -->|Issuer Wins| H[-Amount - $250 Fee]
-```
+![Multi-round dispute lifecycle](docs/figures/multi_round_dispute_lifecycle.png)
 
 Arbitration is where the environment becomes especially interesting.
 
