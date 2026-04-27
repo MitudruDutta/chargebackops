@@ -131,7 +131,7 @@ That is a complete evidence-backed operational path.
 
 ## Architecture
 
-![Architecture diagram](docs/figures/architecture.png)
+![Architecture diagram — five layers from Pydantic models through grading](https://raw.githubusercontent.com/MitudruDutta/chargebackops/main/docs/figures/architecture.png)
 
 The environment has five main layers:
 
@@ -145,7 +145,7 @@ The environment has five main layers:
 
 ## Multi-Round Dispute Lifecycle
 
-![Multi-round dispute lifecycle](docs/figures/multi_round_dispute_lifecycle.png)
+![Multi-round dispute lifecycle — representment, pre-arbitration, arbitration, and terminal P&L](https://raw.githubusercontent.com/MitudruDutta/chargebackops/main/docs/figures/multi_round_dispute_lifecycle.png)
 
 Arbitration is where the environment becomes especially interesting.
 
@@ -201,7 +201,7 @@ The agent has to decide not only what to do, but what to do **now**.
 
 ChargebackOps uses a composable OpenEnv rubric instead of one monolithic reward.
 
-![8-dimensional rubric weights](https://huggingface.co/spaces/mitudrudutta/ChargeBackOps/resolve/main/docs/figures/rubric_weights.png)
+![8-dimensional rubric weights](https://raw.githubusercontent.com/MitudruDutta/chargebackops/main/docs/figures/rubric_weights.png)
 
 | Dimension | Weight | What it measures |
 |---|---:|---|
@@ -255,7 +255,7 @@ Yes.
 
 I tested four scripted policies across the headline catalog and multi-seed grid.
 
-![Policy discrimination benchmark](https://huggingface.co/spaces/mitudrudutta/ChargeBackOps/resolve/main/docs/figures/discrimination_gradient.png)
+![Policy discrimination benchmark](https://raw.githubusercontent.com/MitudruDutta/chargebackops/main/docs/figures/discrimination_gradient.png)
 
 | Policy | Headline avg | Multi-seed avg | Behavior |
 |---|---:|---:|---|
@@ -328,7 +328,7 @@ The reason for using outcome reward is simple: the goal is not just to imitate a
 
 ## Training Results
 
-![Training curve](https://huggingface.co/spaces/mitudrudutta/ChargeBackOps/resolve/main/docs/figures/training_curve.png)
+![Training curve](https://raw.githubusercontent.com/MitudruDutta/chargebackops/main/docs/figures/training_curve.png)
 
 The clearest legitimate learning signal is the SFT checkpoint.
 
@@ -355,7 +355,7 @@ The SFT model learned the interface and improved over the base model.
 
 ## Per-Difficulty Behavior
 
-![Training curve by family](https://huggingface.co/spaces/mitudrudutta/ChargeBackOps/resolve/main/docs/figures/training_curve_by_family.png)
+![Training curve by family](https://raw.githubusercontent.com/MitudruDutta/chargebackops/main/docs/figures/training_curve_by_family.png)
 
 The easy and medium cases improve most clearly after SFT.
 
@@ -393,7 +393,7 @@ The closest valid actions are:
 
 The invalid action parsed as JSON but failed action validation. Because the evaluation helper fell back to the heuristic on invalid model output, the final score reflected heuristic behavior rather than trained-model behavior.
 
-![Gaming attribution](https://huggingface.co/spaces/mitudrudutta/ChargeBackOps/resolve/main/docs/figures/gaming_attribution.png)
+![Gaming attribution](https://raw.githubusercontent.com/MitudruDutta/chargebackops/main/docs/figures/gaming_attribution.png)
 
 This produced a clear rule for typed-action RL environments:
 
